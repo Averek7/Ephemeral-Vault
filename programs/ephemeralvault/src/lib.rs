@@ -195,11 +195,30 @@ pub mod ephemeral_vault {
         Ok(())
     }
 
+    pub fn reactivate_vault(ctx: Context<ReactivateVault>) -> Result<()> {
+        let vault = &mut ctx.accounts.vault;
+
+        require_keys_eq!(
+            vault.user_wallet,
+            ctx.accounts.user.key(),
+            EphemeralVaultError::Unauthorized
+        );
+
+        vault.is_active = true;
+        vault.last_activity = Clock::get()?.unix_timestamp;
+
+        msg!("Vault reactivated: {:?}", vault.key());
+
+        Ok(())
+    }
+
     pub fn cleanup_vault(ctx: Context<CleanupVault>) -> Result<()> {
         let vault = &mut ctx.accounts.vault;
         let user_wallet = vault.user_wallet;
         let cleaner = &ctx.accounts.cleaner;
         let clock = Clock::get()?;
+
+        require!(!vault.is_active, EphemeralVaultError::VaultInactive);
 
         // Vault must be expired
         if let Some(last) = vault.delegated_at.or(Some(vault.last_activity)) {
@@ -286,6 +305,12 @@ pub struct RevokeAccess<'info> {
     pub user: Signer<'info>,
 }
 
+#[derive(Accounts)]
+pub struct ReactivateVault<'info> {
+    #[account(mut)]
+    pub vault: Account<'info, EphemeralVault>,
+    pub user: Signer<'info>,
+}
 #[derive(Accounts)]
 pub struct CleanupVault<'info> {
     #[account(mut)]
