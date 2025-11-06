@@ -1,17 +1,10 @@
-import * as os from "os";
-import * as path from "path";
 import * as anchor from "@coral-xyz/anchor";
 import { assert } from "chai";
 import * as fs from "fs";
+import { Program } from "@coral-xyz/anchor";
+import { EphemeralVault } from "../target/types/ephemeral_vault"
 
 describe("ephemeral_vault (devnet)", () => {
-
-  // ✅ Use Devnet RPC
-  process.env.ANCHOR_PROVIDER_URL = "https://api.devnet.solana.com";
-
-  // ✅ Path to your wallet
-  process.env.ANCHOR_WALLET =
-    process.env.ANCHOR_WALLET ?? path.join(os.homedir(), ".config/solana/id.json");
 
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
@@ -21,12 +14,9 @@ describe("ephemeral_vault (devnet)", () => {
     fs.readFileSync("./target/idl/ephemeral_vault.json", "utf8")
   );
 
-  const programId = new anchor.web3.PublicKey(
-    "6kCDcjY3jrnEMkEauyz4jivSTKpbjfxyaGVovEApJgjc"
-  );
-
   // ✅ Create program instance
-  const program = new anchor.Program(idl as anchor.Idl, provider);
+  const program = new anchor.Program(idl as anchor.Idl, provider) as Program<EphemeralVault>;
+
 
   const user = anchor.web3.Keypair.generate();
   const delegate = anchor.web3.Keypair.generate();
@@ -37,14 +27,14 @@ describe("ephemeral_vault (devnet)", () => {
   let bump: number;
 
   [vaultPda, bump] = anchor.web3.PublicKey.findProgramAddressSync(
-    [Buffer.from("vault"), user.publicKey.toBuffer()],
+    [Buffer.from("vault"), provider.wallet.publicKey.toBuffer()],
     program.programId
   );
 
   it("Creates Ephemeral Vault", async () => {
     await program.methods
       .createEphemeralVault(approvedAmount)
-      .accounts({
+      .accountsPartial({
         user: user.publicKey,
         vault: vaultPda,
         systemProgram: anchor.web3.SystemProgram.programId,
@@ -92,16 +82,6 @@ describe("ephemeral_vault (devnet)", () => {
     assert.ok(vault.lastActivity > 0);
   });
 
-  // it("Reactivate Delegate", async () => {
-  //   await program.methods
-  //     .reactivateVault()
-  //     .accounts({
-  //       user: user.publicKey,
-  //       vault: vaultPda,
-  //     })
-  //     .rpc();
-  // })
-
   it("Delegate Executes Trade", async () => {
     const tradeFee = new anchor.BN(0.1 * anchor.web3.LAMPORTS_PER_SOL);
     const tradeAmount = new anchor.BN(1_000_000);
@@ -120,6 +100,30 @@ describe("ephemeral_vault (devnet)", () => {
   });
 
   it("User Revokes Access", async () => {
+    await program.methods
+      .revokeAccess()
+      .accounts({
+        user: user.publicKey,
+        vault: vaultPda,
+      })
+      .rpc();
+
+    const vault = await program.account.ephemeralVault.fetch(vaultPda);
+    assert.strictEqual(vault.isActive, false);
+    assert.strictEqual(vault.delegateWallet, null);
+  });
+
+    it("Reactivate Delegate", async () => {
+    await program.methods
+      .reactivateVault()
+      .accounts({
+        user: user.publicKey,
+        vault: vaultPda,
+      })
+      .rpc();
+  })
+
+   it("User Revokes Access", async () => {
     await program.methods
       .revokeAccess()
       .accounts({

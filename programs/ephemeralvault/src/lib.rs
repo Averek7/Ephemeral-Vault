@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::system_instruction;
 
-declare_id!("6kCDcjY3jrnEMkEauyz4jivSTKpbjfxyaGVovEApJgjc");
+declare_id!("FJwrtkVTxkfD7BshUx3uvpC5LKfQBqjUhunxMovqcxxA");
 
 #[program]
 pub mod ephemeral_vault {
