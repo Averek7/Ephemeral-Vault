@@ -1,33 +1,35 @@
-use backend::{AppState, build_router};
-use std::net::SocketAddr;
-use dotenv::dotenv;
+// ==================== main.rs ====================
+use backend::{build_router, init_state};
 use sqlx::postgres::PgPoolOptions;
-use std::env;
+use std::sync::Arc;
+use axum::Server;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    dotenv().ok();
+async fn main() {
+    dotenvy::dotenv().ok();
 
-    // Load environment
-    let db_url = env::var("DATABASE_URL")?;
-    let pool = PgPoolOptions::new()
+    let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL missing");
+    let rpc_url = std::env::var("RPC_URL").unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".into());
+
+    let db = PgPoolOptions::new()
         .max_connections(10)
         .connect(&db_url)
-        .await?;
+        .await
+        .unwrap();
 
-    // App shared state
-    let state = AppState::new(pool)?;
+    // AES key stored in env: SEALING_KEY=32bytehex...
+    let sealing_key = hex::decode(std::env::var("SEALING_KEY").unwrap())
+        .unwrap()
+        .try_into()
+        .unwrap();
 
-    // Setup Axum app
-    let app = build_router(state);
+    let state = Arc::new(init_state(db, &rpc_url, &sealing_key).await.unwrap());
+    let router = build_router(state);
 
-    // Start server
-    let addr: SocketAddr = "0.0.0.0:8080".parse().unwrap();
-    println!("🚀 Ephemeral Backend running at {}", addr);
+    println!("🚀 Ephemeral Wallet Backend Running on http://127.0.0.1:8000");
 
-    axum::Server::bind(&addr)
-        .serve(app.into_make_service())
-        .await?;
-
-    Ok(())
+    Server::bind(&"0.0.0.0:8000".parse().unwrap())
+        .serve(router.into_make_service())
+        .await
+        .unwrap();
 }
