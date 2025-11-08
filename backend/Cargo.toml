@@ -25,3 +25,4 @@ rand = "0.8"
 chrono = "0.4"
 # Encryption (for ephemeral key secure storage)
 ring = "0.17"
+ed25519-dalek = "1.0.1"
