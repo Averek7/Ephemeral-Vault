@@ -1,152 +1,107 @@
-use anyhow::Result;
-use chrono::{DateTime, Utc};
-use rand::rngs::OsRng;
-use serde::{Deserialize, Serialize};
-use solana_sdk::signature::{Keypair, Signer};
-use sqlx::{PgPool, FromRow};
-use uuid::Uuid;
-use ring::aead;
 use std::sync::Arc;
+use chrono::{Utc, Duration};
+use sqlx::{Pool, Postgres};
+use ring::aead::{LessSafeKey, UnboundKey, AES_256_GCM, Nonce};
+use solana_sdk::signature::{Keypair, Signer};
+use uuid::Uuid;
+use anyhow::{Result, anyhow};
+use rand::rngs::OsRng;
+use rand::RngCore;
 
-#[derive(Clone)]
-pub struct SessionService {
-    pub db: Arc<PgPool>,
-    pub sealing_key: aead::LessSafeKey,
+#[derive(Debug, Clone)]
+pub struct SessionManager {
+    pub db: Pool<Postgres>,
+    pub sealing_key: Arc<LessSafeKey>,
 }
 
-#[derive(Debug, Serialize, Deserialize, FromRow)]
-pub struct EphemeralSession {
-    pub id: Uuid,
-    pub user: String,
-    pub ephemeral_wallet: String,
-    pub encrypted_key: Vec<u8>,
-    pub vault_pda: String,
-    pub expires_at: DateTime<Utc>,
-    pub approved_amount: i64,
-    pub total_deposited: i64,
-    pub delegate_pubkey: Option<String>,
-    pub delegate_approved: bool,
-}
+impl SessionManager {
+    /// Create new ephemeral trading session
+    pub async fn create_session(
+        &self,
+        user_id: String,
+        session_lifetime_minutes: i64,
+    ) -> Result<Uuid> {
+        // Generate ephemeral wallet
+        let keypair = Keypair::generate(&mut OsRng);
+        let pubkey = keypair.pubkey().to_string();
+        let private_key_bytes = keypair.to_bytes();
 
-#[derive(Deserialize)]
-pub struct EphemeralSessionCreateRequest {
-    pub user: String,
-}
+        // Encrypt private key before storing in DB
+        let encrypted_key = self.encrypt(&private_key_bytes)?;
 
-#[derive(Serialize)]
-pub struct EphemeralSessionCreateResponse {
-    pub id: Uuid,
-    pub user: String,
-    pub ephemeral_wallet: String,
-    pub vault_pda: String,
-    pub expires_at: DateTime<Utc>,
-}
-
-impl From<EphemeralSession> for EphemeralSessionCreateResponse {
-    fn from(s: EphemeralSession) -> Self {
-        EphemeralSessionCreateResponse {
-            id: s.id,
-            user: s.user,
-            ephemeral_wallet: s.ephemeral_wallet,
-            vault_pda: s.vault_pda,
-            expires_at: s.expires_at,
-        }
-    }
-}
-
-impl SessionService {
-    pub fn new(db: Arc<PgPool>, sealing_key: aead::LessSafeKey) -> Self {
-        Self { db, sealing_key }
-    }
-
-    pub async fn create_session(&self, user: &str) -> Result<EphemeralSession> {
-        // Generate ephemeral Solana keypair
-        let kp = Keypair::generate(&mut OsRng);
-        let pubkey_str = kp.pubkey().to_string();
-
-        // Encrypt private key bytes
-        let sk_bytes = kp.to_bytes(); // 64 bytes
-        // create random nonce (12 bytes)
-        let mut nonce_bytes = [0u8; 12];
-        getrandom::getrandom(&mut nonce_bytes)?;
-        let nonce = aead::Nonce::try_assume_unique_for_key(nonce_bytes)?;
-        let aad = aead::Aad::empty();
-
-        let mut in_out = sk_bytes.to_vec();
-        in_out.extend_from_slice(&[0u8; aead::MAX_TAG_LEN]); // space for tag
-        self.sealing_key.seal_in_place_append_tag(nonce, aad, &mut in_out)
-            .map_err(|e| anyhow::anyhow!("seal failed: {:?}", e))?;
-
-        // store nonce + ciphertext in DB
-        let mut encrypted_blob = nonce_bytes.to_vec();
-        encrypted_blob.extend_from_slice(&in_out);
-
-        let id = Uuid::new_v4();
-        let vault_pda = format!("vault_{}", id);
-        let expires_at = Utc::now() + chrono::Duration::minutes(15);
+        let session_id = Uuid::new_v4();
+        let expires_at = Utc::now() + Duration::minutes(session_lifetime_minutes);
 
         sqlx::query!(
-            r#"
-            INSERT INTO sessions (id, user_id, ephemeral_pubkey, encrypted_key, vault_pda, expires_at, approved_amount, total_deposited, delegate_approved)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            "#,
-            id,
-            user,
-            pubkey_str,
-            &encrypted_blob,
-            vault_pda,
-            expires_at,
-            0i64,
-            0i64,
-            false
-        )
-        .execute(self.db.as_ref())
-        .await?;
-
-        Ok(EphemeralSession {
-            id,
-            user: user.to_string(),
-            ephemeral_wallet: pubkey_str,
-            encrypted_key: encrypted_blob,
-            vault_pda,
-            expires_at,
-            approved_amount: 0,
-            total_deposited: 0,
-            delegate_pubkey: None,
-            delegate_approved: false,
-        })
-    }
-
-    pub async fn get_session(&self, id: Uuid) -> Result<Option<EphemeralSession>> {
-        let rec = sqlx::query_as!(
-            EphemeralSession,
-            r#"
-            SELECT id, user_id as "user!", ephemeral_pubkey as "ephemeral_wallet!", encrypted_key, vault_pda, expires_at, approved_amount, total_deposited, delegate_pubkey, delegate_approved
-            FROM sessions
-            WHERE id = $1
-            "#,
-            id
-        )
-        .fetch_optional(self.db.as_ref())
-        .await?;
-        Ok(rec)
-    }
-
-    /// Save approved delegation info (called after verifying parent signature)
-    pub async fn set_delegation(&self, id: Uuid, delegate_pubkey: &str, approved_amount: i64, expires_at: chrono::DateTime<Utc>) -> Result<()> {
-        sqlx::query!(
-            r#"
-            UPDATE sessions
-            SET delegate_pubkey = $2, delegate_approved = true, approved_amount = $3, expires_at = $4
-            WHERE id = $1
-            "#,
-            id,
-            delegate_pubkey,
-            approved_amount,
+            r#"INSERT INTO sessions (id, user_id, ephemeral_pubkey, encrypted_key, expires_at)
+               VALUES ($1, $2, $3, $4, $5)"#,
+            session_id,
+            user_id,
+            pubkey,
+            encrypted_key,
             expires_at
         )
-        .execute(self.db.as_ref())
+        .execute(&self.db)
         .await?;
-        Ok(())
+
+        Ok(session_id)
+    }
+
+    /// Load decrypted ephemeral wallet from database
+    pub async fn get_session_keypair(&self, session_id: Uuid) -> Result<Keypair> {
+        let row = sqlx::query!(
+            r#"SELECT encrypted_key
+               FROM sessions
+               WHERE id = $1 AND expires_at > NOW()"#,
+            session_id
+        )
+        .fetch_one(&self.db)
+        .await?;
+
+        let decrypted = self.decrypt(&row.encrypted_key)?;
+
+        let keypair = Keypair::from_bytes(&decrypted)
+            .map_err(|_| anyhow!("Failed to deserialize keypair"))?;
+
+        Ok(keypair)
+    }
+
+    /// Encrypt private key
+    fn encrypt(&self, data: &[u8]) -> Result<Vec<u8>> {
+        let mut nonce_bytes = [0u8; 12];
+        OsRng.fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::assume_unique_for_key(nonce_bytes);
+
+        let mut buffer = data.to_vec();
+        buffer.extend_from_slice(&[0u8; 16]); // space for tag
+
+        self.sealing_key
+            .seal_in_place_append_tag(nonce, ring::aead::Aad::empty(), &mut buffer)
+            .map_err(|_| anyhow!("Encryption failed"))?;
+
+        // prepend nonce so decrypt knows how to reverse it
+        let mut out = nonce_bytes.to_vec();
+        out.extend_from_slice(&buffer);
+
+        Ok(out)
+    }
+
+    /// Decrypt private key
+    fn decrypt(&self, encrypted: &[u8]) -> Result<Vec<u8>> {
+        if encrypted.len() < 12 {
+            return Err(anyhow!("Invalid encrypted blob"));
+        }
+
+        let (nonce_bytes, ciphertext) = encrypted.split_at(12);
+        let nonce = Nonce::assume_unique_for_key(nonce_bytes.try_into().unwrap());
+
+        let mut buffer = ciphertext.to_vec();
+
+        let decrypted_data = self
+            .sealing_key
+            .open_in_place(nonce, ring::aead::Aad::empty(), &mut buffer)
+            .map_err(|_| anyhow!("Decryption failed"))?;
+
+        Ok(decrypted_data.to_vec())
     }
 }

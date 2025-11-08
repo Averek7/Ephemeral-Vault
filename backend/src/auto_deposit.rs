@@ -1,54 +1,58 @@
-use anyhow::Result;
-use solana_client::rpc_client::RpcClient;
-use solana_sdk::pubkey::Pubkey;
-use solana_sdk::signature::Keypair;
-use solana_sdk::system_instruction;
-use solana_sdk::transaction::Transaction;
-use std::time::Duration;
-use tokio::time::sleep;
+use anyhow::{Result, anyhow};
+use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_sdk::{pubkey::Pubkey, commitment_config::CommitmentConfig};
 
-/// Simple auto-deposit calculator and top-up helper
+const MIN_REQUIRED_BUFFER_SOL: f64 = 0.015;    // avoid lamport starvation
+const MAX_AUTO_DEPOSIT_SOL: f64 = 1.0;         // upper safety limit
+
+#[derive(Debug, Clone)]
 pub struct AutoDepositCalculator {
     pub rpc: RpcClient,
 }
 
 impl AutoDepositCalculator {
-    pub fn new(rpc_url: &str) -> Self {
-        Self { rpc: RpcClient::new(rpc_url.to_string()) }
+    /// Estimate expected SOL spending for N trading operations
+    pub fn estimate_trading_cost(&self, tx_count: u32) -> f64 {
+        let avg_fee_per_tx = 0.000005; // ~5k lamports, approx typical Solana tx fee
+        tx_count as f64 * avg_fee_per_tx
     }
 
-    pub fn estimate_fee_lamports(&self) -> u64 {
-        5_000u64 // 0.000005 SOL
-    }
-
-    pub fn optimal_deposit(&self, current_balance: u64, buffer: u64) -> u64 {
-        let fee = self.estimate_fee_lamports();
-        let target = fee.saturating_add(buffer);
-        if current_balance >= target { 0 } else { target - current_balance }
-    }
-
-    pub async fn top_up_vault(
+    /// Compute optimal amount to deposit (vault balance + forecasted trading ops)
+    pub fn calculate_optimal_deposit(
         &self,
-        parent: &Keypair,
-        vault: &Pubkey,
-        amount: u64,
-    ) -> Result<solana_sdk::signature::Signature> {
-        let mut attempt = 0u32;
-        let mut delay = Duration::from_millis(200);
-        loop {
-            attempt += 1;
-            let blockhash = self.rpc.get_latest_blockhash()?;
-            let ix = system_instruction::transfer(&parent.pubkey(), vault, amount);
-            let tx = Transaction::new_signed_with_payer(&[ix], Some(&parent.pubkey()), &[parent], blockhash);
-            match self.rpc.send_and_confirm_transaction(&tx) {
-                Ok(sig) => return Ok(sig),
-                Err(e) => {
-                    tracing::warn!("top_up failed attempt {}: {:?}", attempt, e);
-                    if attempt >= 5 { return Err(anyhow::anyhow!("top_up failed: {:?}", e)); }
-                    sleep(delay).await;
-                    delay *= 2;
-                }
-            }
+        tx_count: u32,
+        current_vault_sol: f64,
+    ) -> f64 {
+        let required = self.estimate_trading_cost(tx_count) + MIN_REQUIRED_BUFFER_SOL;
+
+        if current_vault_sol >= required {
+            return 0.0; // no deposit needed
         }
+
+        let diff = required - current_vault_sol;
+        diff.min(MAX_AUTO_DEPOSIT_SOL)
+    }
+
+    /// Read vault SOL balance from chain
+    pub async fn get_balance(&self, vault_wallet: &Pubkey) -> Result<f64> {
+        let balance = self
+            .rpc
+            .get_balance_with_commitment(vault_wallet, CommitmentConfig::confirmed())
+            .await
+            .map_err(|_| anyhow!("Unable to fetch vault balance"))?
+            .value;
+
+        Ok(balance as f64 / 1_000_000_000f64)
+    }
+
+    /// Decide whether system must trigger a top-up
+    pub async fn needs_top_up(
+        &self,
+        vault_wallet: &Pubkey,
+        estimated_tx_count: u32,
+    ) -> Result<bool> {
+        let current = self.get_balance(vault_wallet).await?;
+        let required = self.calculate_optimal_deposit(estimated_tx_count, current);
+        Ok(required > 0.0)
     }
 }

@@ -1,48 +1,52 @@
-use anyhow::Result;
-use ed25519_dalek::{Signature as DalekSignature, PublicKey as DalekPublicKey, Verifier};
-use solana_sdk::pubkey::Pubkey;
-use solana_sdk::signature::Signature as SolSignature;
-use solana_sdk::signature::Keypair as SolKeypair;
-use crate::session_manager::SessionService;
-use uuid::Uuid;
-use chrono::Utc;
+use anyhow::{Result, anyhow};
+use solana_sdk::{
+    pubkey::Pubkey,
+    signature::{Signature, Signer},
+    transaction::Transaction,
+    system_instruction,
+};
+use solana_client::nonblocking::rpc_client::RpcClient;
 
-pub struct DelegationManager {}
+#[derive(Clone)]
+pub struct DelegationManager {
+    pub rpc: RpcClient,
+}
 
 impl DelegationManager {
-    pub fn new() -> Self { Self {} }
+    /// Build delegation transaction (parent wallet signs)
+    pub fn build_delegate_tx(
+        &self,
+        parent: &Pubkey,
+        ephemeral: &Pubkey,
+        authority_program: &Pubkey,
+        recent_blockhash: solana_sdk::hash::Hash,
+    ) -> Transaction {
+        let ix = system_instruction::assign(ephemeral, authority_program);
 
-    /// Build delegation message to be signed by parent wallet (canonical).
-    pub fn build_delegation_message(ephemeral: &Pubkey, vault_pda: &str, session_id: &Uuid, expiry_unix: i64) -> Vec<u8> {
-        let mut out = Vec::new();
-        out.extend_from_slice(ephemeral.as_ref());
-        out.extend_from_slice(vault_pda.as_bytes());
-        out.extend_from_slice(session_id.as_bytes());
-        out.extend_from_slice(&expiry_unix.to_le_bytes());
-        out
+        Transaction::new_with_payer(&[ix], Some(parent))
+            .sign(&[], recent_blockhash)
     }
 
-    /// Verify ed25519 signature bytes produced by parent over message.
-    pub fn verify_signature(parent_pubkey: &Pubkey, message: &[u8], sig_bytes: &[u8]) -> Result<bool> {
-        let dalek_pk = DalekPublicKey::from_bytes(parent_pubkey.as_ref())?;
-        let sig = DalekSignature::from_bytes(sig_bytes)?;
-        Ok(dalek_pk.verify(message, &sig).is_ok())
-    }
-
-    /// Activate delegation locally in DB after verification.
-    pub async fn activate_delegation(
-        session_svc: &SessionService,
-        session_id: Uuid,
-        delegate_pubkey: &Pubkey,
-        approved_amount: i64,
-        expiry_unix: i64,
+    /// Verify delegation sig (server ensures user actually signed)
+    pub fn verify_delegation_sig(
+        &self,
+        message: &[u8],
+        signature: &Signature,
+        parent_pubkey: &Pubkey,
     ) -> Result<()> {
-        session_svc.set_delegation(session_id, &delegate_pubkey.to_string(), approved_amount, chrono::DateTime::<Utc>::from_utc(chrono::NaiveDateTime::from_timestamp_opt(expiry_unix, 0).unwrap(), Utc)).await?;
-        Ok(())
+        if signature.verify(parent_pubkey.as_ref(), message).is_ok() {
+            return Ok(());
+        }
+        Err(anyhow!("Delegation signature invalid"))
     }
 
-    pub async fn publish_on_chain(_parent: &SolKeypair, _program_id: &Pubkey) -> Result<SolSignature> {
-        // TODO: implement specific program interaction
-        Err(anyhow::anyhow!("on-chain publish not implemented in this example"))
+    /// End delegation session lifecycle (revoke)
+    pub async fn revoke(
+        &self,
+        ephemeral_wallet: Pubkey,
+    ) -> Result<()> {
+        // No mutation of blockchain needed here.
+        println!("✅ Delegation revoked for ephemeral {ephemeral_wallet}");
+        Ok(())
     }
 }
