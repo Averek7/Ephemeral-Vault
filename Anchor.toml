@@ -6,7 +6,10 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-ephemeralvault = "FJwrtkVTxkfD7BshUx3uvpC5LKfQBqjUhunxMovqcxxA"
+ephemeralvault = "3L2LMJHHvgaGnvQ2ic7a5yu6DffLfoAQFLwFSjFJ4QQt"
+
+[programs.testnet]
+ephemeralvault = "3L2LMJHHvgaGnvQ2ic7a5yu6DffLfoAQFLwFSjFJ4QQt"
 
 [registry]
 url = "https://api.devnet.solana.com"

@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program::{transfer, Transfer};
 
-declare_id!("FJwrtkVTxkfD7BshUx3uvpC5LKfQBqjUhunxMovqcxxA");
+declare_id!("3L2LMJHHvgaGnvQ2ic7a5yu6DffLfoAQFLwFSjFJ4QQt");
 
 const SESSION_DURATION: i64 = 3600; // 1 hour
 const SESSION_RENEWAL_WINDOW: i64 = 300; // 5 minutes before expiry
