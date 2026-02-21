@@ -5,18 +5,18 @@ package_manager = "yarn"
 resolution = true
 skip-lint = false
 
-[programs.devnet]
-ephemeralvault = "3L2LMJHHvgaGnvQ2ic7a5yu6DffLfoAQFLwFSjFJ4QQt"
-
-[programs.testnet]
+[programs.localnet]
 ephemeralvault = "3L2LMJHHvgaGnvQ2ic7a5yu6DffLfoAQFLwFSjFJ4QQt"
 
 [registry]
-url = "https://api.devnet.solana.com"
+url = "https://api.apr.dev"
 
 [provider]
-cluster = "devnet"
+cluster = "Localnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
 test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
+
+[test]
+startup_wait = 10000

@@ -87,7 +87,7 @@ pub mod ephemeral_vault {
         let duration = custom_duration
             .unwrap_or(SESSION_DURATION)
             .min(SESSION_DURATION); // Cap at max duration
-        
+
         let expires_at = clock
             .unix_timestamp
             .checked_add(duration)
@@ -122,14 +122,18 @@ pub mod ephemeral_vault {
             EphemeralVaultError::Unauthorized
         );
 
-        let delegate = vault.delegate_wallet.ok_or(EphemeralVaultError::NoActiveSession)?;
-        let expires_at = vault.session_expires_at.ok_or(EphemeralVaultError::NoActiveSession)?;
+        let delegate = vault
+            .delegate_wallet
+            .ok_or(EphemeralVaultError::NoActiveSession)?;
+        let expires_at = vault
+            .session_expires_at
+            .ok_or(EphemeralVaultError::NoActiveSession)?;
 
         // Check if within renewal window (5 minutes before expiry)
         let time_until_expiry = expires_at
             .checked_sub(clock.unix_timestamp)
             .ok_or(EphemeralVaultError::MathOverflow)?;
-        
+
         require!(
             time_until_expiry <= SESSION_RENEWAL_WINDOW,
             EphemeralVaultError::SessionNotExpiringSoon
@@ -231,7 +235,7 @@ pub mod ephemeral_vault {
 
         require!(vault.is_active, EphemeralVaultError::VaultInactive);
         require!(!vault.is_paused, EphemeralVaultError::VaultPaused);
-        
+
         // Verify delegate
         require!(
             vault.delegate_wallet == Some(delegate.key()),
@@ -242,7 +246,7 @@ pub mod ephemeral_vault {
         let expires_at = vault
             .session_expires_at
             .ok_or(EphemeralVaultError::DelegateNotProperlySet)?;
-        
+
         if clock.unix_timestamp >= expires_at {
             // Auto-revoke expired session
             vault.delegate_wallet = None;
@@ -291,10 +295,7 @@ pub mod ephemeral_vault {
     }
 
     /// Withdraws available balance back to user wallet
-    pub fn withdraw_balance(
-        ctx: Context<WithdrawBalance>,
-        amount: u64,
-    ) -> Result<()> {
+    pub fn withdraw_balance(ctx: Context<WithdrawBalance>, amount: u64) -> Result<()> {
         let vault = &mut ctx.accounts.vault;
         let clock = Clock::get()?;
 
@@ -326,8 +327,12 @@ pub mod ephemeral_vault {
             **vault.to_account_info().try_borrow_mut_lamports()? = vault_lamports
                 .checked_sub(withdraw_amount)
                 .ok_or(EphemeralVaultError::MathOverflow)?;
-            
-            **ctx.accounts.user.to_account_info().try_borrow_mut_lamports()? = ctx
+
+            **ctx
+                .accounts
+                .user
+                .to_account_info()
+                .try_borrow_mut_lamports()? = ctx
                 .accounts
                 .user
                 .to_account_info()
@@ -377,26 +382,28 @@ pub mod ephemeral_vault {
         // Return all available balance
         let vault_lamports = vault.to_account_info().lamports();
         let rent_exempt = Rent::get()?.minimum_balance(vault.to_account_info().data_len());
-        let transferable = vault_lamports
-            .checked_sub(rent_exempt)
-            .unwrap_or(0);
+        let transferable = vault_lamports.checked_sub(rent_exempt).unwrap_or(0);
 
         let returned_amount = if transferable > 0 {
             **vault.to_account_info().try_borrow_mut_lamports()? = rent_exempt;
-            **ctx.accounts.user.to_account_info().try_borrow_mut_lamports()? = ctx
+            **ctx
+                .accounts
+                .user
+                .to_account_info()
+                .try_borrow_mut_lamports()? = ctx
                 .accounts
                 .user
                 .to_account_info()
                 .lamports()
                 .checked_add(transferable)
                 .ok_or(EphemeralVaultError::MathOverflow)?;
-            
+
             vault.available_amount = 0;
             vault.total_withdrawn = vault
                 .total_withdrawn
                 .checked_add(transferable)
                 .ok_or(EphemeralVaultError::MathOverflow)?;
-            
+
             transferable
         } else {
             0
@@ -457,8 +464,8 @@ pub mod ephemeral_vault {
             EphemeralVaultError::Unauthorized
         );
         require!(
-            new_approved_amount >= MIN_APPROVED_AMOUNT 
-            && new_approved_amount <= MAX_APPROVED_AMOUNT,
+            new_approved_amount >= MIN_APPROVED_AMOUNT
+                && new_approved_amount <= MAX_APPROVED_AMOUNT,
             EphemeralVaultError::InvalidApprovedAmount
         );
 
@@ -500,7 +507,7 @@ pub mod ephemeral_vault {
     }
 
     /// Unpause vault
-    /// 
+    ///
     /// # Errors
     /// * `Unauthorized` - If caller is not vault owner
     pub fn unpause_vault(ctx: Context<UnpauseVault>) -> Result<()> {
@@ -532,15 +539,16 @@ pub mod ephemeral_vault {
         require!(!vault.is_active, EphemeralVaultError::VaultStillActive);
 
         // Check expiry
-        let check_timestamp = vault.session_expires_at
+        let check_timestamp = vault
+            .session_expires_at
             .or(vault.delegated_at)
             .unwrap_or(vault.last_activity);
-        
+
         let elapsed = clock
             .unix_timestamp
             .checked_sub(check_timestamp)
             .ok_or(EphemeralVaultError::MathOverflow)?;
-        
+
         require!(
             elapsed > SESSION_DURATION,
             EphemeralVaultError::SessionNotExpired
@@ -549,9 +557,7 @@ pub mod ephemeral_vault {
         // Calculate rewards
         let vault_lamports = vault.to_account_info().lamports();
         let rent_exempt = Rent::get()?.minimum_balance(vault.to_account_info().data_len());
-        let available = vault_lamports
-            .checked_sub(rent_exempt)
-            .unwrap_or(0);
+        let available = vault_lamports.checked_sub(rent_exempt).unwrap_or(0);
 
         let (to_user, reward) = if available > 0 {
             let reward = available
@@ -561,21 +567,21 @@ pub mod ephemeral_vault {
                 .ok_or(EphemeralVaultError::MathOverflow)?
                 .max(MIN_CLEANUP_REWARD)
                 .min(available / 10); // Cap at 10%
-            
+
             let to_user = available
                 .checked_sub(reward)
                 .ok_or(EphemeralVaultError::MathOverflow)?;
 
             // Transfer funds
             **vault.to_account_info().try_borrow_mut_lamports()? = rent_exempt;
-            
+
             **ctx.accounts.user_wallet.try_borrow_mut_lamports()? = ctx
                 .accounts
                 .user_wallet
                 .lamports()
                 .checked_add(to_user)
                 .ok_or(EphemeralVaultError::MathOverflow)?;
-            
+
             **ctx.accounts.cleaner.try_borrow_mut_lamports()? = ctx
                 .accounts
                 .cleaner
@@ -738,23 +744,23 @@ pub struct GetVaultStats<'info> {
 
 #[account]
 pub struct EphemeralVault {
-    pub user_wallet: Pubkey,           
-    pub vault_pda: Pubkey,             
-    pub created_at: i64,               
-    pub last_activity: i64,            
-    pub approved_amount: u64,          
-    pub used_amount: u64,              
-    pub available_amount: u64,         
-    pub delegate_wallet: Option<Pubkey>, 
-    pub delegated_at: Option<i64>,    
-    pub session_expires_at: Option<i64>, 
-    pub total_deposited: u64,          
-    pub total_withdrawn: u64,          
-    pub trade_count: u64,              
-    pub is_active: bool,               
-    pub is_paused: bool,               
-    pub version: u8,                   
-    pub bump: u8,                      
+    pub user_wallet: Pubkey,
+    pub vault_pda: Pubkey,
+    pub created_at: i64,
+    pub last_activity: i64,
+    pub approved_amount: u64,
+    pub used_amount: u64,
+    pub available_amount: u64,
+    pub delegate_wallet: Option<Pubkey>,
+    pub delegated_at: Option<i64>,
+    pub session_expires_at: Option<i64>,
+    pub total_deposited: u64,
+    pub total_withdrawn: u64,
+    pub trade_count: u64,
+    pub is_active: bool,
+    pub is_paused: bool,
+    pub version: u8,
+    pub bump: u8,
 } // Total: ~191 bytes + discriminator (8) = ~199 bytes
 
 #[event]
@@ -885,55 +891,55 @@ pub struct VaultStats {
 pub enum EphemeralVaultError {
     #[msg("Unauthorized: only the vault owner can perform this action")]
     Unauthorized,
-    
+
     #[msg("Vault is inactive")]
     VaultInactive,
-    
+
     #[msg("Vault is already active")]
     VaultAlreadyActive,
-    
+
     #[msg("Vault is still active and cannot be cleaned")]
     VaultStillActive,
-    
+
     #[msg("Vault is paused")]
     VaultPaused,
-    
+
     #[msg("Session has expired")]
     SessionExpired,
-    
+
     #[msg("No active session")]
     NoActiveSession,
-    
+
     #[msg("Session not expiring soon - cannot renew yet")]
     SessionNotExpiringSoon,
-    
+
     #[msg("Deposit exceeds approved limit")]
     OverDeposit,
-    
+
     #[msg("Insufficient funds in vault")]
     InsufficientFunds,
-    
+
     #[msg("Vault session not yet expired")]
     SessionNotExpired,
-    
+
     #[msg("Invalid approved amount: must be between MIN and MAX")]
     InvalidApprovedAmount,
-    
+
     #[msg("Deposit amount too small")]
     DepositTooSmall,
-    
+
     #[msg("Deposit amount too large")]
     DepositTooLarge,
-    
+
     #[msg("Math operation overflow")]
     MathOverflow,
-    
+
     #[msg("Invalid trade amount")]
     InvalidTradeAmount,
-    
+
     #[msg("Delegate wallet not properly set")]
     DelegateNotProperlySet,
-    
+
     #[msg("Cannot delegate to self")]
     InvalidDelegate,
 }
