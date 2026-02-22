@@ -324,21 +324,22 @@ describe("ephemeral_vault (TypeScript)", () => {
       );
     });
 
-    it("rejects wrong delegate and auto-revokes expired session", async () => {
+    it("rejects wrong delegate and fails on expired session", async () => {
       const f = await createFixture();
 
       await program.methods
-        .approveDelegate(f.delegate.publicKey, new BN(3)) // 3 seconds
+        .approveDelegate(f.delegate.publicKey, new BN(1))
         .accounts({ user: f.user.publicKey, vault: f.vaultPda })
         .signers([f.user])
         .rpc();
 
       await program.methods
-        .autoDepositForTrade(new BN(MIN_DEPOSIT_AMOUNT))
+        .autoDepositForTrade(MIN_DEPOSIT_AMOUNT)
         .accounts({ user: f.user.publicKey, vault: f.vaultPda })
         .signers([f.user])
         .rpc();
 
+      // Test wrong delegate
       await expectError(
         program.methods
           .executeTrade(new BN(1000), new BN(1000))
@@ -348,10 +349,10 @@ describe("ephemeral_vault (TypeScript)", () => {
         "Unauthorized",
       );
 
-      // Wait for expiry
-      await sleep(3500);
+      // Wait for session to expire
+      await sleep(1500);
 
-      // Now correct delegate after expiry
+      // Test expired session
       await expectError(
         program.methods
           .executeTrade(new BN(1000), new BN(1000))
@@ -361,10 +362,14 @@ describe("ephemeral_vault (TypeScript)", () => {
         "SessionExpired",
       );
 
+      // Session is not auto-revoked (transaction rolled back)
+      // User must manually revoke or reapprove
       const vault = await program.account.ephemeralVault.fetch(f.vaultPda);
-
-      assert.equal(vault.delegateWallet, null);
-      assert.equal(vault.sessionExpiresAt, null);
+      assert.strictEqual(
+        vault.delegateWallet?.toBase58(),
+        f.delegate.publicKey.toBase58(),
+      );
+      assert.isNotNull(vault.sessionExpiresAt);
     });
   });
 

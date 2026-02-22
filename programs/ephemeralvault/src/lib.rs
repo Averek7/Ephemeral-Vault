@@ -247,13 +247,10 @@ pub mod ephemeral_vault {
             .session_expires_at
             .ok_or(EphemeralVaultError::DelegateNotProperlySet)?;
 
-        if clock.unix_timestamp >= expires_at {
-            // Auto-revoke expired session
-            vault.delegate_wallet = None;
-            vault.delegated_at = None;
-            vault.session_expires_at = None;
-            return Err(EphemeralVaultError::SessionExpired.into());
-        }
+        require!(
+            clock.unix_timestamp < expires_at,
+            EphemeralVaultError::SessionExpired
+        );
 
         require!(
             vault.available_amount >= trade_fee,
@@ -293,7 +290,6 @@ pub mod ephemeral_vault {
 
         Ok(())
     }
-
     /// Withdraws available balance back to user wallet
     pub fn withdraw_balance(ctx: Context<WithdrawBalance>, amount: u64) -> Result<()> {
         let vault = &mut ctx.accounts.vault;
