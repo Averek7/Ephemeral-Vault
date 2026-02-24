@@ -122,7 +122,7 @@ export default function Home() {
               <Shield size={14} className="text-sol-purple" />
             </div>
             <span className="text-sm font-bold tracking-tight">
-              Ephemeral <span className="text-sol-purple">Vault</span>
+              Exec<span className="text-sol-purple">Vault</span>
             </span>
           </div>
           <WalletButton />
@@ -136,7 +136,7 @@ export default function Home() {
         >
           <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-sol-purple/10 border border-sol-purple/30 text-sol-purple text-xs font-mono mb-8">
             <span className="w-1.5 h-1.5 rounded-full bg-sol-green inline-block pulse-dot" />
-            Live on Solana Mainnet
+            Live on Solana Devnet
           </div>
 
           <h1 className="text-5xl md:text-7xl font-extrabold leading-none tracking-tight mb-6">
