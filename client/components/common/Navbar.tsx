@@ -18,7 +18,7 @@ export function Navbar() {
             <Shield size={14} className="text-sol-purple" />
           </div>
           <span className="text-sm font-bold tracking-tight">
-            Ephemeral <span className="text-sol-purple">Vault</span>
+            Exec<span className="text-sol-purple">Vault</span>
           </span>
         </Link>
 
