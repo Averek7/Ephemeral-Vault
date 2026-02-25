@@ -1,12 +1,13 @@
-import type { Metadata } from 'next';
+import type { Metadata } from "next";
 import "./globals.css";
-import { VaultProvider } from '@/contexts/VaultContext';
-import { NotificationProvider } from '@/contexts/NotificationContext';
-// import { ToastContainer } from '@/components/common/Toast';
+import { VaultProvider } from "@/contexts/VaultContext";
+import { NotificationProvider } from "@/contexts/NotificationContext";
+import { ToastContainer } from "@/components/common/Toast";
 
 export const metadata: Metadata = {
-  title: 'ExecVault — Secure Temporary Trading on Solana',
-  description: 'Pre-approve spending limits for automated trading with time-based session control on Solana.',
+  title: "ExecVault — Secure Temporary Trading on Solana",
+  description:
+    "Pre-approve spending limits for automated trading with time-based session control on Solana.",
 };
 
 export default function RootLayout({
@@ -20,7 +21,7 @@ export default function RootLayout({
         <NotificationProvider>
           <VaultProvider>
             {children}
-            {/* <ToastContainer /> */}
+            <ToastContainer />
           </VaultProvider>
         </NotificationProvider>
       </body>
