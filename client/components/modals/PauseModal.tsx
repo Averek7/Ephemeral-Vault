@@ -1,6 +1,5 @@
 'use client';
 
-import React from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { Modal } from '@/components/common/Modal';
 import { Button } from '@/components/common/Button';
