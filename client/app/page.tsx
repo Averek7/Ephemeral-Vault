@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Shield,
@@ -142,31 +142,155 @@ function LiveTicker() {
   );
 }
 
-// ─── Animated vault diagram ──────────────────────────────────────────────────
+const NODE_W = 64; // node box width/height in px
+
+// Node centres in the 384×288 space
+const N = {
+  vault: { x: 192, y: 144 },
+  owner: { x: 72, y: 48 },
+  bot: { x: 312, y: 48 },
+  solana: { x: 192, y: 248 },
+};
+
+// Shorten a line so it starts/ends at the edge of a node box (half = 32px)
+function shorten(ax: number, ay: number, bx: number, by: number, pad = 36) {
+  const dx = bx - ax,
+    dy = by - ay;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  const ux = dx / len,
+    uy = dy / len;
+  return {
+    x1: ax + ux * pad,
+    y1: ay + uy * pad,
+    x2: bx - ux * pad,
+    y2: by - uy * pad,
+  };
+}
+
+const LINES = [
+  {
+    key: "owner",
+    ...shorten(N.owner.x, N.owner.y, N.vault.x, N.vault.y),
+    color: "rgba(153,69,255,0.3)",
+    dot: "#9945FF",
+    pulseIdx: 0,
+    motionPath: `M${shorten(N.owner.x, N.owner.y, N.vault.x, N.vault.y).x1},${
+      shorten(N.owner.x, N.owner.y, N.vault.x, N.vault.y).y1
+    } L${shorten(N.owner.x, N.owner.y, N.vault.x, N.vault.y).x2},${
+      shorten(N.owner.x, N.owner.y, N.vault.x, N.vault.y).y2
+    }`,
+  },
+  {
+    key: "bot",
+    ...shorten(N.bot.x, N.bot.y, N.vault.x, N.vault.y),
+    color: "rgba(20,241,149,0.3)",
+    dot: "#14F195",
+    pulseIdx: 1,
+    motionPath: `M${shorten(N.bot.x, N.bot.y, N.vault.x, N.vault.y).x1},${
+      shorten(N.bot.x, N.bot.y, N.vault.x, N.vault.y).y1
+    } L${shorten(N.bot.x, N.bot.y, N.vault.x, N.vault.y).x2},${
+      shorten(N.bot.x, N.bot.y, N.vault.x, N.vault.y).y2
+    }`,
+  },
+  {
+    key: "solana",
+    ...shorten(N.vault.x, N.vault.y, N.solana.x, N.solana.y),
+    color: "rgba(255,107,157,0.3)",
+    dot: "#FF6B9D",
+    pulseIdx: 2,
+    motionPath: `M${shorten(N.vault.x, N.vault.y, N.solana.x, N.solana.y).x1},${
+      shorten(N.vault.x, N.vault.y, N.solana.x, N.solana.y).y1
+    } L${shorten(N.vault.x, N.vault.y, N.solana.x, N.solana.y).x2},${
+      shorten(N.vault.x, N.vault.y, N.solana.x, N.solana.y).y2
+    }`,
+  },
+];
+
 function VaultDiagram() {
   const [pulse, setPulse] = useState(0);
   useEffect(() => {
-    const t = setInterval(() => setPulse((p) => (p + 1) % 3), 1200);
+    const t = setInterval(() => setPulse((p) => (p + 1) % 3), 1400);
     return () => clearInterval(t);
   }, []);
 
+  // Convert SVG-space centre to CSS top/left (subtract half node size)
+  const pos = (cx: number, cy: number) => ({
+    left: `${cx - NODE_W / 2}px`,
+    top: `${cy - NODE_W / 2}px`,
+  });
+
   return (
-    <div className="relative w-full max-w-sm mx-auto h-64 select-none">
-      {/* Center vault */}
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20">
-        <div className="w-20 h-20 rounded-2xl bg-vault-surface border-2 border-sol-purple/50 flex flex-col items-center justify-center gap-1 shadow-lg shadow-sol-purple/20">
-          <Shield size={22} className="text-sol-purple" />
-          <span className="text-xs font-bold text-sol-purple mono">VAULT</span>
+    <div
+      className="relative w-full mx-auto select-none"
+      style={{ height: "288px", maxWidth: "384px" }}
+    >
+      {/* ── SVG lines layer (sits behind everything) ── */}
+      <svg
+        viewBox="0 0 384 288"
+        className="absolute inset-0 w-full h-full pointer-events-none"
+        style={{ zIndex: 5 }}
+      >
+        {/* Triangle outline (faint) */}
+        <polygon
+          points={`${N.owner.x},${N.owner.y} ${N.bot.x},${N.bot.y} ${N.solana.x},${N.solana.y}`}
+          fill="none"
+          stroke="rgba(255,255,255,0.04)"
+          strokeWidth="1"
+        />
+
+        {/* Connection lines */}
+        {LINES.map((l) => (
+          <line
+            key={l.key}
+            x1={l.x1}
+            y1={l.y1}
+            x2={l.x2}
+            y2={l.y2}
+            stroke={l.color}
+            strokeWidth="1.5"
+            strokeDasharray="5 4"
+          />
+        ))}
+
+        {/* Animated travelling dots */}
+        {/* {LINES.map(
+          (l) =>
+            pulse === l.pulseIdx && (
+              <circle
+                key={`dot-${l.key}`}
+                r="3.5"
+                fill={l.dot}
+                style={{ filter: `drop-shadow(0 0 4px ${l.dot})` }}
+              >
+                <animateMotion dur="1.4s" repeatCount="1" path={l.motionPath} />
+              </circle>
+            ),
+        )} */}
+      </svg>
+
+      {/* ── Vault — dead centre ── */}
+      <div
+        className="absolute z-20"
+        style={{ ...pos(N.vault.x, N.vault.y), width: NODE_W, height: NODE_W }}
+      >
+        <div className="w-full h-full rounded-2xl bg-vault-surface border-2 border-sol-purple/60 flex flex-col items-center justify-center gap-1 shadow-xl shadow-sol-purple/20">
+          <Shield size={20} className="text-sol-purple" />
+          <span className="text-[10px] font-extrabold text-sol-purple tracking-widest mono">
+            VAULT
+          </span>
         </div>
-        {/* Rotating ring */}
+        {/* Rotating dashed ring */}
         <div
-          className="absolute inset-0 -m-3 rounded-3xl border border-dashed border-sol-purple/20 animate-spin"
-          style={{ animationDuration: "12s" }}
+          className="absolute rounded-2xl border border-dashed border-sol-purple/25 animate-spin pointer-events-none"
+          style={{ inset: "-10px", animationDuration: "14s" }}
         />
       </div>
 
-      {/* Wallet node */}
-      <div className="absolute top-4 left-8">
+      {/* ── Owner — top-left ── */}
+      <div
+        className="absolute z-10"
+        style={{ ...pos(N.owner.x, N.owner.y), width: NODE_W, height: NODE_W }}
+      >
         <NodeBox
           icon={<Users size={14} />}
           label="Owner"
@@ -174,8 +298,12 @@ function VaultDiagram() {
           active={pulse === 0}
         />
       </div>
-      {/* Bot node */}
-      <div className="absolute top-4 right-8">
+
+      {/* ── Bot — top-right ── */}
+      <div
+        className="absolute z-10"
+        style={{ ...pos(N.bot.x, N.bot.y), width: NODE_W, height: NODE_W }}
+      >
         <NodeBox
           icon={<Bot size={14} />}
           label="Bot"
@@ -183,8 +311,16 @@ function VaultDiagram() {
           active={pulse === 1}
         />
       </div>
-      {/* Chain node */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2">
+
+      {/* ── Solana — bottom-centre ── */}
+      <div
+        className="absolute z-10"
+        style={{
+          ...pos(N.solana.x, N.solana.y),
+          width: NODE_W,
+          height: NODE_W,
+        }}
+      >
         <NodeBox
           icon={<Cpu size={14} />}
           label="Solana"
@@ -192,65 +328,6 @@ function VaultDiagram() {
           active={pulse === 2}
         />
       </div>
-
-      {/* Connecting lines — SVG */}
-      <svg
-        className="absolute inset-0 w-full h-full pointer-events-none"
-        style={{ zIndex: 5 }}
-      >
-        {/* Owner → Vault */}
-        <line
-          x1="90"
-          y1="44"
-          x2="160"
-          y2="120"
-          stroke="rgba(153,69,255,0.25)"
-          strokeWidth="1"
-          strokeDasharray="4 4"
-        />
-        {/* Bot → Vault */}
-        <line
-          x1="260"
-          y1="44"
-          x2="180"
-          y2="120"
-          stroke="rgba(20,241,149,0.25)"
-          strokeWidth="1"
-          strokeDasharray="4 4"
-        />
-        {/* Vault → Solana */}
-        <line
-          x1="170"
-          y1="148"
-          x2="170"
-          y2="208"
-          stroke="rgba(255,107,157,0.25)"
-          strokeWidth="1"
-          strokeDasharray="4 4"
-        />
-        {/* Animated dot on owner→vault */}
-        {pulse === 0 && (
-          <circle r="3" fill="#9945FF">
-            <animateMotion dur="1.2s" repeatCount="1" path="M90,44 L160,120" />
-          </circle>
-        )}
-        {/* Animated dot on bot→vault */}
-        {pulse === 1 && (
-          <circle r="3" fill="#14F195">
-            <animateMotion dur="1.2s" repeatCount="1" path="M260,44 L180,120" />
-          </circle>
-        )}
-        {/* Animated dot on vault→solana */}
-        {pulse === 2 && (
-          <circle r="3" fill="#FF6B9D">
-            <animateMotion
-              dur="1.2s"
-              repeatCount="1"
-              path="M170,148 L170,208"
-            />
-          </circle>
-        )}
-      </svg>
     </div>
   );
 }
@@ -268,16 +345,16 @@ function NodeBox({
 }) {
   return (
     <div
-      className="w-16 h-16 rounded-xl flex flex-col items-center justify-center gap-1 border transition-all duration-500"
+      className="w-full h-full rounded-xl flex flex-col items-center justify-center gap-1 border transition-all duration-500"
       style={{
-        background: active ? color + "18" : "rgba(26,26,36,0.8)",
-        borderColor: active ? color + "80" : "#2D2D3D",
-        boxShadow: active ? `0 0 16px ${color}30` : "none",
+        background: active ? color + "1A" : "rgba(26,26,36,0.9)",
+        borderColor: active ? color + "90" : "#2D2D3D",
+        boxShadow: active ? `0 0 20px ${color}35` : "none",
       }}
     >
       <span style={{ color }}>{icon}</span>
       <span
-        className="text-xs font-mono"
+        className="text-[10px] font-mono leading-none"
         style={{ color: active ? color : "#A0A0B0" }}
       >
         {label}
@@ -351,7 +428,7 @@ export default function LandingPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [mounted, setMounted] = useState(false);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setMounted(true);
   }, []);
 
@@ -496,7 +573,9 @@ export default function LandingPage() {
       {/* ── Hero ── */}
       <section className="relative z-10 max-w-6xl mx-auto px-6 pt-20 pb-16">
         <div
-          className={`grid lg:grid-cols-2 gap-12 items-center transition-all duration-700 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"}`}
+          className={`grid lg:grid-cols-2 gap-12 items-center transition-all duration-700 ${
+            mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
+          }`}
         >
           {/* Left: copy */}
           <div>
@@ -739,20 +818,20 @@ export default function LandingPage() {
               f.color === "green"
                 ? "rgba(20,241,149,0.07)"
                 : f.color === "purple"
-                  ? "rgba(153,69,255,0.07)"
-                  : "rgba(255,107,157,0.07)";
+                ? "rgba(153,69,255,0.07)"
+                : "rgba(255,107,157,0.07)";
             const bc =
               f.color === "green"
                 ? "rgba(20,241,149,0.18)"
                 : f.color === "purple"
-                  ? "rgba(153,69,255,0.18)"
-                  : "rgba(255,107,157,0.18)";
+                ? "rgba(153,69,255,0.18)"
+                : "rgba(255,107,157,0.18)";
             const tc =
               f.color === "green"
                 ? "#14F195"
                 : f.color === "purple"
-                  ? "#9945FF"
-                  : "#FF6B9D";
+                ? "#9945FF"
+                : "#FF6B9D";
             return (
               <div
                 key={f.title}
@@ -929,8 +1008,8 @@ require!(
             Ready to automate <span className="gradient-text">safely?</span>
           </h2>
           <p className="text-vault-muted mb-8 max-w-md mx-auto text-sm">
-            Create your first Execvault in under two minutes. No
-            registration required.
+            Create your first Execvault in under two minutes. No registration
+            required.
           </p>
           <div className="flex flex-wrap justify-center gap-3">
             <button

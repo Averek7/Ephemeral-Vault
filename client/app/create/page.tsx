@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import { PublicKey } from "@solana/web3.js";
 import {
   Shield,
   ChevronRight,
@@ -9,6 +10,7 @@ import {
   Check,
   AlertTriangle,
 } from "lucide-react";
+
 import { Navbar } from "@/components/common/Navbar";
 import { Card } from "@/components/common/Card";
 import { Input } from "@/components/common/Input";
@@ -17,39 +19,84 @@ import { useVault } from "@/contexts/VaultContext";
 
 const STEPS = ["Spending Limit", "Delegate Bot", "Initial Deposit"];
 
+const isValidSolanaAddress = (addr: string) => {
+  try {
+    new PublicKey(addr);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export default function CreatePage() {
   const router = useRouter();
   const { createVault, isLoading, walletConnected, connectWallet } = useVault();
+
   const [step, setStep] = useState(0);
+  const [currentTime] = useState(() => Date.now());
 
   const [approvedAmount, setApprovedAmount] = useState("10");
   const [delegate, setDelegate] = useState("");
   const [sessionDuration, setSessionDuration] = useState(60);
-  const [customDuration, setCustomDuration] = useState("");
   const [initialDeposit, setInitialDeposit] = useState("");
-  const walletBalance = 5.2;
+
+  const balance = 5; // Mocked wallet balance, replace with actual balance from context or hook
+  const walletBalance = balance ?? 0;
 
   const approvedNum = parseFloat(approvedAmount) || 0;
   const depositNum = parseFloat(initialDeposit) || 0;
 
+  const expiryTime = useMemo(() => {
+    return new Date(currentTime + sessionDuration * 60_000);
+  }, [sessionDuration, currentTime]);
+
+  const approvedError =
+    approvedNum < 0.001
+      ? "Minimum is 0.001 SOL"
+      : approvedNum > 1000
+      ? "Maximum is 1,000 SOL"
+      : undefined;
+
+  const delegateError =
+    delegate && !isValidSolanaAddress(delegate)
+      ? "Invalid Solana address"
+      : undefined;
+
+  const depositError =
+    depositNum > walletBalance
+      ? "Exceeds wallet balance"
+      : depositNum > approvedNum
+      ? "Exceeds approved limit"
+      : depositNum <= 0 && initialDeposit
+      ? "Deposit must be greater than 0"
+      : undefined;
+
   const canNext = () => {
-    if (step === 0) return approvedNum >= 0.001 && approvedNum <= 1000;
-    if (step === 1) return delegate.length >= 10;
-    if (step === 2) return depositNum > 0 && depositNum <= walletBalance;
+    if (step === 0) return !approvedError && approvedNum > 0;
+    if (step === 1) return delegate && !delegateError;
+    if (step === 2)
+      return (
+        depositNum > 0 &&
+        depositNum <= walletBalance &&
+        depositNum <= approvedNum
+      );
     return false;
   };
 
   const handleNext = () => {
-    if (step < 2) setStep((s) => s + 1);
+    if (step < 2 && canNext()) setStep((s) => s + 1);
   };
 
   const handleCreate = async () => {
+    if (!canNext() || isLoading) return;
+
     await createVault({
       approvedAmount: approvedNum,
       delegate,
       sessionDuration,
       initialDeposit: depositNum,
     });
+
     router.push("/dashboard");
   };
 
@@ -77,9 +124,7 @@ export default function CreatePage() {
           <div className="w-12 h-12 rounded-2xl bg-sol-purple/20 border border-sol-purple/30 flex items-center justify-center mx-auto mb-4">
             <Shield size={22} className="text-sol-purple" />
           </div>
-          <h1 className="text-2xl font-extrabold mb-1">
-            Create ExecVault
-          </h1>
+          <h1 className="text-2xl font-extrabold mb-1">Create ExecVault</h1>
           <p className="text-sm text-vault-muted">
             Secure temporary trading access on Solana
           </p>
@@ -111,7 +156,7 @@ export default function CreatePage() {
               </div>
               {i < STEPS.length - 1 && (
                 <div
-                  className={`flex-1 h-0.5 mx-2 mb-4 transition-all ${
+                  className={`flex-1 h-0.5 mx-2 mb-4 ${
                     i < step ? "bg-sol-green" : "bg-vault-border"
                   }`}
                 />
@@ -120,32 +165,28 @@ export default function CreatePage() {
           ))}
         </div>
 
-        {/* Step content */}
+        {/* Step Card */}
         <Card elevated glow="purple">
+          {/* STEP 0 */}
           {step === 0 && (
             <div className="space-y-5">
-              <div>
-                <h2 className="text-lg font-bold mb-1">Set Spending Limit</h2>
-                <p className="text-sm text-vault-muted">
-                  Maximum amount you authorize for automated trading.
-                </p>
-              </div>
               <Input
                 label="Approved Amount"
                 type="number"
                 value={approvedAmount}
                 onChange={(e) => setApprovedAmount(e.target.value)}
-                suffix="SOL"
-                hint="Min: 0.001 SOL · Max: 1,000 SOL"
+                hint="Min: 0.001 · Max: 1,000"
+                suffixNode="SOL"
+                error={approvedError}
               />
-              {/* Slider */}
+
               <div className="space-y-2">
                 <input
                   type="range"
                   min="0.001"
                   max="100"
                   step="0.1"
-                  value={Math.min(parseFloat(approvedAmount) || 0, 100)}
+                  value={Math.min(approvedNum || 0, 100)}
                   onChange={(e) => setApprovedAmount(e.target.value)}
                   className="w-full accent-sol-purple"
                 />
@@ -155,118 +196,76 @@ export default function CreatePage() {
                   <span>100 SOL</span>
                 </div>
               </div>
-              {approvedNum > 0 && (
-                <div className="rounded-lg bg-sol-purple/5 border border-sol-purple/20 p-3 text-xs text-sol-purple">
-                  Authorizing {approvedNum} SOL ≈ $
-                  {(approvedNum * 170).toFixed(2)} USD
-                </div>
-              )}
             </div>
           )}
 
+          {/* STEP 1 */}
           {step === 1 && (
             <div className="space-y-5">
-              <div>
-                <h2 className="text-lg font-bold mb-1">Delegate Trading Bot</h2>
-                <p className="text-sm text-vault-muted">
-                  The wallet address of the bot you're authorizing.
-                </p>
-              </div>
               <Input
                 label="Delegate Wallet Address"
                 type="text"
                 value={delegate}
                 onChange={(e) => setDelegate(e.target.value)}
                 placeholder="Enter Solana wallet address..."
-                hint="Paste the bot's public key"
+                hint="Only approve trusted bots"
+                error={delegateError}
               />
+
               <div className="space-y-2">
                 <label className="text-xs font-medium text-vault-muted uppercase tracking-wider">
                   Session Duration
                 </label>
-                <div className="space-y-2">
-                  {[
-                    { label: "30 Minutes", value: 30 },
-                    { label: "1 Hour (recommended)", value: 60 },
-                    { label: "4 Hours", value: 240 },
-                  ].map((opt) => (
-                    <label
-                      key={opt.value}
-                      className="flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all"
-                      style={{
-                        borderColor:
-                          sessionDuration === opt.value
-                            ? "rgba(153,69,255,0.4)"
-                            : "#2D2D3D",
-                        background:
-                          sessionDuration === opt.value
-                            ? "rgba(153,69,255,0.05)"
-                            : "transparent",
-                      }}
-                    >
-                      <input
-                        type="radio"
-                        name="duration"
-                        checked={sessionDuration === opt.value}
-                        onChange={() => setSessionDuration(opt.value)}
-                        className="accent-sol-purple"
-                      />
-                      <span className="text-sm">{opt.label}</span>
-                      {opt.value === 60 && (
-                        <span className="ml-auto text-xs text-sol-green badge-active px-2 py-0.5 rounded-full">
-                          Recommended
-                        </span>
-                      )}
-                    </label>
-                  ))}
-                </div>
+
+                {[30, 60, 240].map((val) => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => setSessionDuration(val)}
+                    className={`w-full text-left p-3 rounded-lg border transition ${
+                      sessionDuration === val
+                        ? "border-sol-purple bg-sol-purple/10"
+                        : "border-vault-border"
+                    }`}
+                  >
+                    {val === 60 ? "1 Hour (recommended)" : `${val} Minutes`}
+                  </button>
+                ))}
               </div>
+
               <div className="flex items-start gap-2 text-xs text-amber-400 bg-amber-400/5 border border-amber-400/20 rounded-lg p-3">
-                <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
-                Only approve wallets from trusted bots and services!
+                <AlertTriangle size={14} className="mt-0.5" />
+                Session expires at {expiryTime.toUTCString()}
               </div>
             </div>
           )}
 
+          {/* STEP 2 */}
           {step === 2 && (
             <div className="space-y-5">
-              <div>
-                <h2 className="text-lg font-bold mb-1">Initial Deposit</h2>
-                <p className="text-sm text-vault-muted">
-                  Fund your vault to get started.
-                </p>
-              </div>
               <Input
                 label="Deposit Amount"
                 type="number"
                 value={initialDeposit}
                 onChange={(e) => setInitialDeposit(e.target.value)}
-                suffix="SOL"
                 hint={`Wallet balance: ${walletBalance} SOL`}
-                error={
-                  depositNum > walletBalance
-                    ? "Exceeds wallet balance"
-                    : depositNum > approvedNum
-                    ? "Exceeds approved limit"
-                    : undefined
-                }
+                suffixNode="SOL"
+                error={depositError}
               />
+
               <button
+                type="button"
                 className="text-xs text-sol-purple hover:underline"
                 onClick={() =>
                   setInitialDeposit(
-                    Math.min(walletBalance, approvedNum).toFixed(3),
+                    Math.min(walletBalance, approvedNum).toString(),
                   )
                 }
               >
-                Use max: {Math.min(walletBalance, approvedNum).toFixed(3)} SOL
+                Use max: {Math.min(walletBalance, approvedNum)} SOL
               </button>
 
-              {/* Summary */}
               <div className="rounded-xl bg-vault-bg border border-vault-border p-4 space-y-3 text-sm">
-                <h4 className="text-xs font-semibold text-vault-muted uppercase tracking-wide">
-                  Summary
-                </h4>
                 <SumRow label="Approved Limit" value={`${approvedNum} SOL`} />
                 <SumRow
                   label="Depositing"
@@ -274,8 +273,10 @@ export default function CreatePage() {
                   highlight={!!depositNum}
                 />
                 <SumRow label="Delegate" value={delegate || "—"} mono />
-                <SumRow label="Session" value={sessionDuration + " min"} />
-                <SumRow label="Network Fee" value="~0.001 SOL" muted />
+                <SumRow
+                  label="Session Expiry"
+                  value={expiryTime.toUTCString()}
+                />
               </div>
             </div>
           )}
@@ -329,24 +330,18 @@ function SumRow({
   value,
   highlight,
   mono,
-  muted,
 }: {
   label: string;
   value: string;
   highlight?: boolean;
   mono?: boolean;
-  muted?: boolean;
 }) {
   return (
     <div className="flex justify-between items-center">
       <span className="text-vault-muted">{label}</span>
       <span
         className={`text-sm ${mono ? "font-mono" : ""} ${
-          highlight
-            ? "text-sol-green font-bold"
-            : muted
-            ? "text-vault-muted"
-            : "text-white"
+          highlight ? "text-sol-green font-bold" : "text-white"
         }`}
       >
         {value}
