@@ -35,7 +35,7 @@ export function WithdrawModal({ isOpen, onClose }: WithdrawModalProps) {
           placeholder="0.000"
           value={amount}
           onChange={e => setAmount(e.target.value)}
-          suffix="SOL"
+          suffixNode="SOL"
           hint={`Available: ${formatSOL(vault.currentBalance)} SOL`}
           error={amount && !valid ? 'Insufficient vault balance' : undefined}
         />

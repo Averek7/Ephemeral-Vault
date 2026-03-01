@@ -1,3 +1,5 @@
+#![allow(unexpected_cfgs)]
+
 use anchor_lang::prelude::*;
 use anchor_lang::system_program::{transfer, Transfer};
 
@@ -11,6 +13,7 @@ const MIN_DEPOSIT_AMOUNT: u64 = 1_000_000; // 0.001 SOL
 const MAX_DEPOSIT_AMOUNT: u64 = 100_000_000_000; // 100 SOL per deposit
 const CLEANUP_REWARD_BPS: u64 = 100; // 1%
 const MIN_CLEANUP_REWARD: u64 = 100_000; // 0.0001 SOL minimum reward
+#[allow(dead_code)]
 const EMERGENCY_PAUSE_AUTHORITY: Pubkey = Pubkey::new_from_array([0; 32]); // Set in production
 
 // Version for upgrade tracking
