@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Shield,
@@ -406,7 +406,6 @@ function HowStep({
   );
 }
 
-// ─── Security feature pill ───────────────────────────────────────────────────
 function SecurityPill({
   icon,
   label,
@@ -422,15 +421,10 @@ function SecurityPill({
   );
 }
 
-// ─── Main page ───────────────────────────────────────────────────────────────
 export default function LandingPage() {
   const { walletConnected, connectWallet } = useVault();
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [mounted, setMounted] = useState(false);
-
-  useLayoutEffect(() => {
-    setMounted(true);
-  }, []);
+  const [mounted] = useState(true);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -813,7 +807,7 @@ export default function LandingPage() {
               color: "coral" as const,
               tag: "WebSocket feed",
             },
-          ].map((f, i) => {
+          ].map((f) => {
             const bg =
               f.color === "green"
                 ? "rgba(20,241,149,0.07)"

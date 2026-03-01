@@ -13,7 +13,19 @@ import {
 import { Card, CardHeader } from "@/components/common/Card";
 import { generateChartData } from "@/lib/mock";
 
-const CustomTooltip = ({ active, payload, label }: any) => {
+interface TooltipPayload {
+  name: string;
+  value: number;
+  color: string;
+}
+
+interface CustomTooltipProps {
+  active?: boolean;
+  payload?: TooltipPayload[];
+  label?: string;
+}
+
+const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
   if (!active || !payload?.length) return null;
   return (
     <div className="bg-vault-surface border border-vault-border rounded-lg px-3 py-2 text-xs shadow-xl">
