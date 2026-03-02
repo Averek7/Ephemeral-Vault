@@ -11,7 +11,7 @@ import { WithdrawModal } from '@/components/modals/WithdrawModal';
 import { PauseModal } from '@/components/modals/PauseModal';
 
 export function VaultOverview() {
-  const { vault, isLoading } = useVault();
+  const { vault } = useVault();
   const [showDeposit, setShowDeposit] = useState(false);
   const [showWithdraw, setShowWithdraw] = useState(false);
   const [showPause, setShowPause] = useState(false);

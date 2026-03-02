@@ -6,10 +6,12 @@ import React, {
   useState,
   useCallback,
   useEffect,
+  useRef,
 } from "react";
 import { VaultAccount, Trade, CreateVaultParams } from "@/lib/types";
 import { MOCK_VAULT, MOCK_TRADES } from "@/lib/mock";
 import { useNotification } from "./NotificationContext";
+import { useWallet } from "@solana/wallet-adapter-react";
 
 interface VaultContextType {
   vault: VaultAccount | null;
@@ -18,8 +20,6 @@ interface VaultContextType {
   walletAddress: string;
   isLoading: boolean;
 
-  connectWallet: () => void;
-  disconnectWallet: () => void;
   createVault: (params: CreateVaultParams) => Promise<void>;
   deposit: (amount: number) => Promise<void>;
   withdraw: (amount: number) => Promise<void>;
@@ -34,14 +34,19 @@ const VaultContext = createContext<VaultContextType>({} as VaultContextType);
 export function VaultProvider({ children }: { children: React.ReactNode }) {
   const [vault, setVault] = useState<VaultAccount | null>(null);
   const [trades, setTrades] = useState<Trade[]>([]);
-  const [walletConnected, setWalletConnected] = useState(false);
-  const [walletAddress, setWalletAddress] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const { addToast } = useNotification();
+  const { connected, publicKey } = useWallet();
+  const walletConnected = connected;
+  const walletAddress = publicKey?.toBase58() ?? "";
+  const hasSeenConnectionState = useRef(false);
+  const isVaultActive = vault?.status === "active";
+  const effectiveVault = walletConnected ? vault : null;
+  const effectiveTrades = walletConnected ? trades : [];
 
   // Simulate real-time trade updates
   useEffect(() => {
-    if (!vault || vault.status !== "active") return;
+    if (!isVaultActive) return;
     const interval = setInterval(() => {
       const newTrade: Trade = {
         id: Math.random().toString(36).slice(2),
@@ -78,24 +83,28 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
       );
     }, 15000);
     return () => clearInterval(interval);
-  }, [vault?.status, addToast]);
+  }, [isVaultActive, addToast]);
 
-  const connectWallet = useCallback(() => {
-    setWalletConnected(true);
-    setWalletAddress("7hNm...3kRt");
-    addToast("Wallet connected successfully", "success");
-  }, [addToast]);
+  useEffect(() => {
+    if (!hasSeenConnectionState.current) {
+      hasSeenConnectionState.current = true;
+      return;
+    }
 
-  const disconnectWallet = useCallback(() => {
-    setWalletConnected(false);
-    setWalletAddress("");
-    setVault(null);
-    setTrades([]);
+    if (walletConnected) {
+      addToast("Wallet connected successfully", "success");
+      return;
+    }
+
     addToast("Wallet disconnected", "info");
-  }, [addToast]);
+  }, [walletConnected, addToast]);
 
   const createVault = useCallback(
     async (params: CreateVaultParams) => {
+      if (!walletConnected || !walletAddress) {
+        addToast("Connect your wallet to create a vault", "warning");
+        return;
+      }
       setIsLoading(true);
       await new Promise((r) => setTimeout(r, 2000));
       const newVault: VaultAccount = {
@@ -116,7 +125,7 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
       setIsLoading(false);
       addToast("Vault created successfully!", "success");
     },
-    [walletAddress, addToast],
+    [walletConnected, walletAddress, addToast],
   );
 
   const deposit = useCallback(
@@ -217,13 +226,11 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
   return (
     <VaultContext.Provider
       value={{
-        vault,
-        trades,
+        vault: effectiveVault,
+        trades: effectiveTrades,
         walletConnected,
         walletAddress,
         isLoading,
-        connectWallet,
-        disconnectWallet,
         createVault,
         deposit,
         withdraw,
@@ -235,7 +242,7 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
     >
       {children}
       {/* Hidden demo loader */}
-      {walletConnected && !vault && (
+      {walletConnected && !effectiveVault && (
         <button onClick={loadDemo} className="hidden" id="load-demo" />
       )}
     </VaultContext.Provider>

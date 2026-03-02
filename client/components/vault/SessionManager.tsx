@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect } from "react";
 import { Timer, RefreshCw, ShieldOff, Activity } from "lucide-react";
 import { Card, CardHeader } from "@/components/common/Card";
 import { Button } from "@/components/common/Button";
@@ -18,23 +18,22 @@ export function SessionManager() {
   const { vault, renewSession, isLoading } = useVault();
   const [seconds, setSeconds] = useState(0);
   const [showRevoke, setShowRevoke] = useState(false);
+  const [lastActivityTime] = useState(() => Date.now() - 2 * 60 * 1000);
+  const sessionExpiry = vault?.sessionExpiry;
 
   useEffect(() => {
-    if (!vault) return;
-    const tick = () => setSeconds(getSecondsRemaining(vault.sessionExpiry));
+    if (!sessionExpiry) return;
+    const tick = () => setSeconds(getSecondsRemaining(sessionExpiry));
     tick();
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [vault?.sessionExpiry]);
+  }, [sessionExpiry]);
 
   if (!vault) return null;
 
   const color = getTimerColor(seconds);
   const pct = getTimerPercent(60, seconds);
   const isExpiringSoon = seconds < 5 * 60;
-  const lastActivityTime = useMemo(() => {
-    return Date.now() - 2 * 60 * 1000;
-  }, []);
 
   return (
     <>

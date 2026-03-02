@@ -16,6 +16,7 @@ import { Card } from "@/components/common/Card";
 import { Input } from "@/components/common/Input";
 import { Button } from "@/components/common/Button";
 import { useVault } from "@/contexts/VaultContext";
+import { WalletButton } from "@/components/wallet/WalletButton";
 
 const STEPS = ["Spending Limit", "Delegate Bot", "Initial Deposit"];
 
@@ -30,7 +31,7 @@ const isValidSolanaAddress = (addr: string) => {
 
 export default function CreatePage() {
   const router = useRouter();
-  const { createVault, isLoading, walletConnected, connectWallet } = useVault();
+  const { createVault, isLoading, walletConnected } = useVault();
 
   const [step, setStep] = useState(0);
   const [currentTime] = useState(() => Date.now());
@@ -109,7 +110,9 @@ export default function CreatePage() {
           <p className="text-vault-muted">
             You need to connect your wallet to create a vault.
           </p>
-          <Button onClick={connectWallet}>Connect Wallet</Button>
+          <div className="flex justify-center">
+            <WalletButton />
+          </div>
         </div>
       </div>
     );
