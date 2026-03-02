@@ -261,3 +261,16 @@ textarea:focus {
 .recharts-cartesian-grid line {
   stroke: var(--vault-border) !important;
 }
+
+.wallet-item {
+  @apply w-full flex items-center gap-3
+  px-5 py-3 text-sm
+  text-white/70 hover:text-white
+  hover:bg-white/5 transition;
+}
+
+.wallet-item-large {
+  @apply w-full py-3 rounded-xl
+  bg-white/5 text-white text-sm
+  hover:bg-white/10 transition;
+}

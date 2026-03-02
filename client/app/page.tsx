@@ -23,10 +23,9 @@ import {
   Cpu,
   GitBranch,
 } from "lucide-react";
-import { WalletButton } from "@/components/wallet/WalletButton";
 import { useVault } from "@/contexts/VaultContext";
+import { Navbar } from "@/components/common/Navbar";
 
-// ─── Live ticker feed ────────────────────────────────────────────────────────
 const TICKER_EVENTS = [
   {
     type: "vault",
@@ -422,7 +421,7 @@ function SecurityPill({
 }
 
 export default function LandingPage() {
-  const { walletConnected, connectWallet } = useVault();
+  const { walletConnected } = useVault();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [mounted] = useState(true);
 
@@ -520,39 +519,7 @@ export default function LandingPage() {
       />
 
       {/* ── Navbar ── */}
-      <header className="relative z-40 border-b border-vault-border bg-vault-bg/60 backdrop-blur-xl">
-        <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-sol-purple/20 border border-sol-purple/40 flex items-center justify-center">
-              <Shield size={14} className="text-sol-purple" />
-            </div>
-            <span className="text-sm font-bold tracking-tight">
-              Exec<span className="text-sol-purple">Vault</span>
-            </span>
-          </div>
-          <nav className="hidden md:flex items-center gap-1">
-            <a
-              href="#how"
-              className="px-3 py-1.5 text-xs text-vault-muted hover:text-white transition-colors rounded-lg hover:bg-white/5"
-            >
-              How it works
-            </a>
-            <a
-              href="#security"
-              className="px-3 py-1.5 text-xs text-vault-muted hover:text-white transition-colors rounded-lg hover:bg-white/5"
-            >
-              Security
-            </a>
-            <Link
-              href="/create"
-              className="px-3 py-1.5 text-xs text-vault-muted hover:text-white transition-colors rounded-lg hover:bg-white/5"
-            >
-              Create Vault
-            </Link>
-          </nav>
-          <WalletButton />
-        </div>
-      </header>
+      <Navbar />
 
       {/* ── Live ticker banner ── */}
       <div className="relative z-30 border-b border-vault-border bg-vault-surface/40 backdrop-blur py-1.5 px-6">
@@ -631,18 +598,19 @@ export default function LandingPage() {
                   Open Dashboard <ArrowRight size={16} />
                 </Link>
               ) : (
-                <button
-                  onClick={connectWallet}
+                <Link
+                  href="/create"
                   className="inline-flex items-center gap-2 px-6 py-3 rounded-xl btn-shimmer text-white font-bold text-sm shadow-lg shadow-sol-purple/30 hover:brightness-110 transition-all"
                 >
-                  Connect &amp; Start <ArrowRight size={16} />
-                </button>
+                  Create Vault <ArrowRight size={16} />
+                </Link>
               )}
               <Link
-                href="/create"
+                href={walletConnected ? "/create" : "/dashboard"}
                 className="inline-flex items-center gap-2 px-6 py-3 rounded-xl border border-vault-border text-vault-muted text-sm font-semibold hover:text-white hover:border-sol-purple/40 transition-all"
               >
-                Create Vault <ChevronRight size={16} />
+                {walletConnected ? "Create Vault" : "Open Dashboard"}{" "}
+                <ChevronRight size={16} />
               </Link>
             </div>
 
@@ -754,7 +722,7 @@ export default function LandingPage() {
       </section>
 
       {/* ── Features grid ── */}
-      <section className="relative z-10 max-w-6xl mx-auto px-6 py-20">
+      <section className="relative z-10 max-w-6xl mx-auto px-6 py-20" id="core">
         <div className="text-center mb-12">
           <p className="text-xs font-mono text-sol-purple uppercase tracking-widest mb-3">
             Core Features
@@ -1006,12 +974,13 @@ require!(
             required.
           </p>
           <div className="flex flex-wrap justify-center gap-3">
-            <button
-              onClick={connectWallet}
+            <Link
+              href={walletConnected ? "/dashboard" : "/create"}
               className="inline-flex items-center gap-2 px-7 py-3.5 rounded-xl btn-shimmer text-white font-bold text-sm shadow-lg shadow-sol-purple/30 hover:brightness-110 transition-all"
             >
-              Get Started <ArrowRight size={16} />
-            </button>
+              {walletConnected ? "Open Dashboard" : "Create Vault"}{" "}
+              <ArrowRight size={16} />
+            </Link>
             <a
               href="#"
               className="inline-flex items-center gap-2 px-7 py-3.5 rounded-xl border border-vault-border text-vault-muted text-sm font-semibold hover:text-white hover:border-sol-purple/40 transition-all"

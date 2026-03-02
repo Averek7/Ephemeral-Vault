@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React from "react";
 import Link from "next/link";
 import { Plus, LayoutDashboard } from "lucide-react";
 import { Navbar } from "@/components/common/Navbar";
@@ -10,13 +10,10 @@ import { TradeHistory } from "@/components/trading/TradeHistory";
 import { ActivityChart } from "@/components/trading/ActivityChart";
 import { Button } from "@/components/common/Button";
 import { useVault } from "@/contexts/VaultContext";
-import { MOCK_VAULT, MOCK_TRADES } from "@/lib/mock";
+import { WalletButton } from "@/components/wallet/WalletButton";
 
 export default function DashboardPage() {
-  const { vault, walletConnected, isLoading } = useVault();
-
-  // For demo: auto-load mock vault when visiting dashboard
-  const { connectWallet } = useVault();
+  const { vault, walletConnected } = useVault();
 
   if (!walletConnected) {
     return (
@@ -31,9 +28,7 @@ export default function DashboardPage() {
             Connect your Solana wallet to access the dashboard and manage your
             vault.
           </p>
-          <Button onClick={connectWallet} size="lg">
-            Connect Wallet
-          </Button>
+          <WalletButton />
         </div>
       </div>
     );
@@ -49,7 +44,7 @@ export default function DashboardPage() {
           </div>
           <h1 className="text-3xl font-bold">No Vault Found</h1>
           <p className="text-vault-muted max-w-sm">
-            You don't have an active vault yet. Create one to start delegating
+            You don&apos;t have an active vault yet. Create one to start delegating
             trading access.
           </p>
           <div className="flex gap-3">
