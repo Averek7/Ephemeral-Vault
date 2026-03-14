@@ -9,8 +9,7 @@ pub struct TradeRecord {
     pub tx_hash: String,
     pub trade_type: String,
     pub amount_sol: f64,
-    pub fee_sol
-    : f64,
+    pub fee_sol: f64,
     pub status: String,
     pub slot: Option<i64>,
     pub created_at: DateTime<Utc>,
