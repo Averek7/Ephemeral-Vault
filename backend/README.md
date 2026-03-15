@@ -17,7 +17,9 @@ docker compose up -d
 
 2. Configure env:
 
-- Create `backend/.env` using [.env.example](/Users/averek7/Projects/Ephemeral-Vault/backend/.env.example)
+- Create `backend/.env` using `.env.example` as a starting point.
+- Ensure `RPC_URL` and `PROGRAM_ID` match the cluster where the Anchor program is deployed.
+  - If you're running Anchor `localnet`, use `RPC_URL=http://127.0.0.1:8899`.
 
 3. Run server:
 
@@ -32,6 +34,7 @@ The server runs migrations from `backend/migrations/` on startup.
 
 - `GET /health`
 - `GET /vault/:user_pubkey`
+- `GET /vault_stats/:user_pubkey`
 - `GET /trades/:vault_pubkey?limit=&offset=`
+- `POST /trades` inserts a trade record into Postgres (optional; useful for bots/indexers)
 - `POST /tx/*` returns `{ transactionBase64, vaultPda }` for the frontend wallet to sign and send.
-

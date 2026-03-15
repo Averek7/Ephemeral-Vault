@@ -53,12 +53,6 @@ export default function DashboardPage() {
                 <Plus size={18} /> Create Vault
               </Button>
             </Link>
-            <button
-              onClick={() => document.getElementById("load-demo")?.click()}
-              className="px-6 py-3 rounded-xl border border-vault-border text-vault-muted hover:text-white hover:border-sol-purple/40 transition-all text-sm"
-            >
-              Load Demo
-            </button>
           </div>
         </div>
       </div>

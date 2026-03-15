@@ -9,6 +9,7 @@ export const MOCK_VAULT: VaultAccount = {
   totalDeposited: 5.0,
   totalWithdrawn: 2.5,
   tradesExecuted: 23,
+  lastActivity: Date.now() - 2 * 60 * 1000,
   sessionExpiry: Date.now() + 45 * 60 * 1000, // 45 min from now
   status: 'active',
   createdAt: Date.now() - 3 * 60 * 60 * 1000,
