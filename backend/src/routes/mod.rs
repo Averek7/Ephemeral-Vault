@@ -17,7 +17,9 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/vault/:user_pubkey", get(get_vault))
+        .route("/vault_stats/:user_pubkey", get(get_vault_stats))
         .route("/trades/:vault_pubkey", get(get_trades))
+        .route("/trades", post(post_trade))
         .route("/tx/create_vault", post(tx_create_vault))
         .route("/tx/deposit", post(tx_deposit))
         .route("/tx/withdraw", post(tx_withdraw))
@@ -26,6 +28,13 @@ pub fn router(state: AppState) -> Router {
         .route("/tx/revoke", post(tx_revoke))
         .route("/tx/renew_session", post(tx_renew_session))
         .route("/tx/approve_delegate", post(tx_approve_delegate))
+        .route("/tx/reactivate", post(tx_reactivate))
+        .route(
+            "/tx/update_approved_amount",
+            post(tx_update_approved_amount),
+        )
+        .route("/tx/execute_trade", post(tx_execute_trade))
+        .route("/tx/cleanup", post(tx_cleanup))
         .with_state(state)
 }
 
@@ -44,6 +53,7 @@ pub struct VaultAccountDto {
     pub total_deposited: f64,
     pub total_withdrawn: f64,
     pub trades_executed: u64,
+    pub last_activity: i64, // ms since epoch
     pub session_expiry: i64, // ms since epoch, 0 if none
     pub status: String,      // active | paused | revoked | expired
     pub created_at: i64,     // ms since epoch
@@ -100,12 +110,75 @@ async fn get_vault(
         total_deposited: solana::sol_from_lamports(decoded.total_deposited),
         total_withdrawn: solana::sol_from_lamports(decoded.total_withdrawn),
         trades_executed: decoded.trade_count,
+        last_activity: decoded.last_activity.saturating_mul(1000),
         session_expiry: session_expiry_ms,
         status: status.to_string(),
         created_at: decoded.created_at.saturating_mul(1000),
     };
 
     Ok(Json(dto))
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VaultStatsDto {
+    vault_pda: String,
+    available_amount: f64,
+    used_amount: f64,
+    trade_count: u64,
+    session_status: String, // noSession | active | expiringSoon | expired
+    is_active: bool,
+    is_paused: bool,
+    last_activity: i64, // ms since epoch
+}
+
+async fn get_vault_stats(
+    State(state): State<AppState>,
+    Path(user_pubkey): Path<String>,
+) -> Result<Json<VaultStatsDto>> {
+    let user = Pubkey::from_str(&user_pubkey)
+        .map_err(|_| AppError::Internal("invalid user pubkey".into()))?;
+    let (vault_pda, _bump) = solana::derive_vault_pda(&state.program_id, &user);
+
+    let acct = state
+        .rpc
+        .get_account(&vault_pda)
+        .await
+        .map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("AccountNotFound") || msg.contains("could not find") {
+                AppError::VaultNotFound(vault_pda.to_string())
+            } else {
+                AppError::SolanaRpc(msg)
+            }
+        })?;
+
+    let decoded = solana::decode_ephemeral_vault_account(&acct.data)?;
+    let now_s = chrono::Utc::now().timestamp();
+
+    let session_status = match decoded.session_expires_at {
+        None => "noSession",
+        Some(exp) => {
+            if now_s >= exp {
+                "expired"
+            } else if exp.saturating_sub(now_s) <= 300 {
+                "expiringSoon"
+            } else {
+                "active"
+            }
+        }
+    };
+
+    Ok(Json(VaultStatsDto {
+        vault_pda: vault_pda.to_string(),
+        available_amount: solana::sol_from_lamports(decoded.available_amount),
+        used_amount: solana::sol_from_lamports(decoded.used_amount),
+        trade_count: decoded.trade_count,
+        session_status: session_status.to_string(),
+        is_active: decoded.is_active,
+        is_paused: decoded.is_paused,
+        last_activity: decoded.last_activity.saturating_mul(1000),
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -153,6 +226,51 @@ async fn get_trades(
         .collect();
 
     Ok(Json(out))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PostTradeRequest {
+    vault_address: String,
+    tx_hash: String,
+    trade_type: String,
+    amount_sol: f64,
+    fee_sol: f64,
+    status: String,
+    slot: Option<i64>,
+}
+
+async fn post_trade(
+    State(state): State<AppState>,
+    Json(req): Json<PostTradeRequest>,
+) -> Result<Json<TradeDto>> {
+    // Basic input validation
+    Pubkey::from_str(&req.vault_address)
+        .map_err(|_| AppError::Internal("invalid vault pubkey".into()))?;
+
+    let created = db::queries::insert_trade(
+        &state.db,
+        &db::models::NewTrade {
+            vault_address: req.vault_address,
+            tx_hash: req.tx_hash,
+            trade_type: req.trade_type,
+            amount_sol: req.amount_sol,
+            fee_sol: req.fee_sol,
+            status: req.status,
+            slot: req.slot,
+        },
+    )
+    .await?;
+
+    Ok(Json(TradeDto {
+        id: created.id.to_string(),
+        trade_type: created.trade_type,
+        amount: created.amount_sol,
+        fee: created.fee_sol,
+        status: created.status,
+        timestamp: created.created_at.timestamp_millis(),
+        tx_hash: created.tx_hash,
+    }))
 }
 
 // --------------------------
@@ -461,3 +579,146 @@ async fn tx_approve_delegate(
     }))
 }
 
+async fn tx_reactivate(
+    State(state): State<AppState>,
+    Json(req): Json<TxUserRequest>,
+) -> Result<Json<TxResponse>> {
+    let user = Pubkey::from_str(&req.user_pubkey)
+        .map_err(|_| AppError::Internal("invalid user pubkey".into()))?;
+    let (vault_pda, _bump) = solana::derive_vault_pda(&state.program_id, &user);
+    let ix = solana::build_anchor_instruction(
+        state.program_id,
+        "reactivate_vault",
+        vec![
+            solana::meta_vault_writable(vault_pda),
+            solana::meta_user_signer_readonly(user),
+        ],
+        vec![],
+    );
+
+    let bh = solana::latest_blockhash(&state.rpc).await?;
+    let tx_b64 = solana::build_unsigned_tx_base64(user, vec![ix], bh)?;
+    Ok(Json(TxResponse {
+        transaction_base64: tx_b64,
+        vault_pda: vault_pda.to_string(),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TxUpdateApprovedAmountRequest {
+    user_pubkey: String,
+    new_approved_amount_lamports: u64,
+}
+
+async fn tx_update_approved_amount(
+    State(state): State<AppState>,
+    Json(req): Json<TxUpdateApprovedAmountRequest>,
+) -> Result<Json<TxResponse>> {
+    let user = Pubkey::from_str(&req.user_pubkey)
+        .map_err(|_| AppError::Internal("invalid user pubkey".into()))?;
+    let (vault_pda, _bump) = solana::derive_vault_pda(&state.program_id, &user);
+
+    let args = solana::UpdateApprovedAmountArgs {
+        new_approved_amount: req.new_approved_amount_lamports,
+    };
+    let ix = solana::build_anchor_instruction(
+        state.program_id,
+        "update_approved_amount",
+        vec![
+            solana::meta_vault_writable(vault_pda),
+            solana::meta_user_signer_readonly(user),
+        ],
+        borsh_to_vec(&args).map_err(|e| AppError::Internal(e.to_string()))?,
+    );
+
+    let bh = solana::latest_blockhash(&state.rpc).await?;
+    let tx_b64 = solana::build_unsigned_tx_base64(user, vec![ix], bh)?;
+    Ok(Json(TxResponse {
+        transaction_base64: tx_b64,
+        vault_pda: vault_pda.to_string(),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TxExecuteTradeRequest {
+    vault_pubkey: String,
+    delegate_pubkey: String,
+    trade_fee_lamports: u64,
+    trade_amount_lamports: u64,
+}
+
+async fn tx_execute_trade(
+    State(state): State<AppState>,
+    Json(req): Json<TxExecuteTradeRequest>,
+) -> Result<Json<TxResponse>> {
+    let vault = Pubkey::from_str(&req.vault_pubkey)
+        .map_err(|_| AppError::Internal("invalid vault pubkey".into()))?;
+    let delegate = Pubkey::from_str(&req.delegate_pubkey)
+        .map_err(|_| AppError::Internal("invalid delegate pubkey".into()))?;
+
+    let args = solana::ExecuteTradeArgs {
+        trade_fee: req.trade_fee_lamports,
+        trade_amount: req.trade_amount_lamports,
+    };
+    let ix = solana::build_anchor_instruction(
+        state.program_id,
+        "execute_trade",
+        vec![
+            solana::meta_vault_writable(vault),
+            solana::meta_signer_readonly(delegate),
+        ],
+        borsh_to_vec(&args).map_err(|e| AppError::Internal(e.to_string()))?,
+    );
+
+    let bh = solana::latest_blockhash(&state.rpc).await?;
+    let tx_b64 = solana::build_unsigned_tx_base64(delegate, vec![ix], bh)?;
+    Ok(Json(TxResponse {
+        transaction_base64: tx_b64,
+        vault_pda: vault.to_string(),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TxCleanupRequest {
+    vault_pubkey: String,
+    cleaner_pubkey: String,
+}
+
+async fn tx_cleanup(
+    State(state): State<AppState>,
+    Json(req): Json<TxCleanupRequest>,
+) -> Result<Json<TxResponse>> {
+    let vault = Pubkey::from_str(&req.vault_pubkey)
+        .map_err(|_| AppError::Internal("invalid vault pubkey".into()))?;
+    let cleaner = Pubkey::from_str(&req.cleaner_pubkey)
+        .map_err(|_| AppError::Internal("invalid cleaner pubkey".into()))?;
+
+    let acct = state
+        .rpc
+        .get_account(&vault)
+        .await
+        .map_err(|e| AppError::SolanaRpc(e.to_string()))?;
+    let decoded = solana::decode_ephemeral_vault_account(&acct.data)?;
+    let user_wallet = Pubkey::new_from_array(decoded.user_wallet);
+
+    let ix = solana::build_anchor_instruction(
+        state.program_id,
+        "cleanup_vault",
+        vec![
+            solana::meta_vault_writable(vault),
+            solana::meta_writable(user_wallet),
+            solana::meta_signer_writable(cleaner),
+        ],
+        vec![],
+    );
+
+    let bh = solana::latest_blockhash(&state.rpc).await?;
+    let tx_b64 = solana::build_unsigned_tx_base64(cleaner, vec![ix], bh)?;
+    Ok(Json(TxResponse {
+        transaction_base64: tx_b64,
+        vault_pda: vault.to_string(),
+    }))
+}
