@@ -9,4 +9,3 @@ pub struct AppState {
     pub rpc: Arc<RpcClient>,
     pub program_id: Pubkey,
 }
-

@@ -13,8 +13,13 @@ import {
 import { clusterApiUrl } from "@solana/web3.js";
 
 export const SolanaProvider: FC<{ children: ReactNode }> = ({ children }) => {
-  const network = "devnet";
-  const endpoint = useMemo(() => clusterApiUrl(network), [network]);
+  const network = process.env.NEXT_PUBLIC_SOLANA_NETWORK || "devnet";
+  const endpoint = useMemo(() => {
+    const override = process.env.NEXT_PUBLIC_SOLANA_RPC_URL;
+    return override && override.trim().length > 0
+      ? override
+      : clusterApiUrl(network as Parameters<typeof clusterApiUrl>[0]);
+  }, [network]);
 
   const wallets = useMemo(
     () => [new PhantomWalletAdapter(), new SolflareWalletAdapter()],
@@ -24,7 +29,7 @@ export const SolanaProvider: FC<{ children: ReactNode }> = ({ children }) => {
   return (
     <ConnectionProvider endpoint={endpoint}>
       <WalletProvider wallets={wallets} autoConnect>
-        <WalletModalProvider>{children}</WalletModalProvider>
+        <WalletModalProvider>{children}</WalletModalProvider> 
       </WalletProvider>
     </ConnectionProvider>
   );

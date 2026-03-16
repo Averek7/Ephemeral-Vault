@@ -18,7 +18,6 @@ export function SessionManager() {
   const { vault, renewSession, isLoading } = useVault();
   const [seconds, setSeconds] = useState(0);
   const [showRevoke, setShowRevoke] = useState(false);
-  const [lastActivityTime] = useState(() => Date.now() - 2 * 60 * 1000);
   const sessionExpiry = vault?.sessionExpiry;
 
   useEffect(() => {
@@ -45,7 +44,7 @@ export function SessionManager() {
             <span className="text-xs text-vault-muted">
               Last activity:{" "}
               <span className="text-white/70">
-                {formatTimestamp(lastActivityTime)}
+                {formatTimestamp(vault.lastActivity || vault.createdAt)}
               </span>
             </span>
           }
@@ -105,17 +104,23 @@ export function SessionManager() {
                 Delegate Bot
               </p>
               <p className="text-sm font-bold mono text-white">
-                {vault.delegate}
+                {vault.delegate || "—"}
               </p>
             </div>
             <div>
               <p className="text-xs text-vault-muted mb-1 uppercase tracking-wide">
                 Status
               </p>
-              <span className="inline-flex items-center gap-1.5 text-xs badge-active px-2 py-1 rounded-full">
-                <Activity size={10} className="pulse-dot" />
-                Trading Active
-              </span>
+              {vault.status === "active" ? (
+                <span className="inline-flex items-center gap-1.5 text-xs badge-active px-2 py-1 rounded-full">
+                  <Activity size={10} className="pulse-dot" />
+                  Active
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-full border border-vault-border text-vault-muted">
+                  {vault.status}
+                </span>
+              )}
             </div>
             <div>
               <p className="text-xs text-vault-muted mb-1 uppercase tracking-wide">

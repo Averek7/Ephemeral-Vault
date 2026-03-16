@@ -7,6 +7,7 @@ export interface VaultAccount {
   totalDeposited: number;
   totalWithdrawn: number;
   tradesExecuted: number;
+  lastActivity: number;
   sessionExpiry: number; // unix timestamp
   status: 'active' | 'paused' | 'revoked' | 'expired';
   createdAt: number;
@@ -14,10 +15,10 @@ export interface VaultAccount {
 
 export interface Trade {
   id: string;
-  type: 'Swap' | 'Buy' | 'Sell';
+  type: string;
   amount: number;
   fee: number;
-  status: 'success' | 'pending' | 'failed';
+  status: string;
   timestamp: number;
   txHash: string;
 }

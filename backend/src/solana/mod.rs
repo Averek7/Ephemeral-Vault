@@ -129,6 +129,17 @@ pub struct WithdrawBalanceArgs {
     pub amount: u64,
 }
 
+#[derive(BorshSerialize)]
+pub struct ExecuteTradeArgs {
+    pub trade_fee: u64,
+    pub trade_amount: u64,
+}
+
+#[derive(BorshSerialize)]
+pub struct UpdateApprovedAmountArgs {
+    pub new_approved_amount: u64,
+}
+
 // Convenience metas
 pub fn meta_user_signer_writable(user: Pubkey) -> AccountMeta {
     AccountMeta::new(user, true)
@@ -142,7 +153,18 @@ pub fn meta_vault_writable(vault: Pubkey) -> AccountMeta {
     AccountMeta::new(vault, false)
 }
 
+pub fn meta_writable(pubkey: Pubkey) -> AccountMeta {
+    AccountMeta::new(pubkey, false)
+}
+
+pub fn meta_signer_writable(pubkey: Pubkey) -> AccountMeta {
+    AccountMeta::new(pubkey, true)
+}
+
+pub fn meta_signer_readonly(pubkey: Pubkey) -> AccountMeta {
+    AccountMeta::new_readonly(pubkey, true)
+}
+
 pub fn meta_system_program() -> AccountMeta {
     AccountMeta::new_readonly(system_program::ID, false)
 }
-

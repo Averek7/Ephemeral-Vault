@@ -9,9 +9,10 @@ import React, {
   useRef,
 } from "react";
 import { VaultAccount, Trade, CreateVaultParams } from "@/lib/types";
-import { MOCK_VAULT, MOCK_TRADES } from "@/lib/mock";
 import { useNotification } from "./NotificationContext";
-import { useWallet } from "@solana/wallet-adapter-react";
+import { useConnection, useWallet } from "@solana/wallet-adapter-react";
+import { Transaction } from "@solana/web3.js";
+import { apiGet, apiPost, ApiError } from "@/lib/api";
 
 interface VaultContextType {
   vault: VaultAccount | null;
@@ -27,63 +28,69 @@ interface VaultContextType {
   unpauseVault: () => Promise<void>;
   revokeAccess: () => Promise<void>;
   renewSession: () => Promise<void>;
+  approveDelegate: (delegate: string, sessionDurationMinutes?: number) => Promise<void>;
+  reactivateVault: () => Promise<void>;
+  updateApprovedAmount: (newApprovedAmount: number) => Promise<void>;
 }
 
 const VaultContext = createContext<VaultContextType>({} as VaultContextType);
+
+type TxResponse = { transactionBase64: string; vaultPda: string };
+
+function lamportsFromSol(sol: number): number {
+  if (!Number.isFinite(sol) || sol < 0) return 0;
+  return Math.round(sol * 1_000_000_000);
+}
 
 export function VaultProvider({ children }: { children: React.ReactNode }) {
   const [vault, setVault] = useState<VaultAccount | null>(null);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const { addToast } = useNotification();
-  const { connected, publicKey } = useWallet();
+  const { connection } = useConnection();
+  const { connected, publicKey, sendTransaction } = useWallet();
   const walletConnected = connected;
   const walletAddress = publicKey?.toBase58() ?? "";
   const hasSeenConnectionState = useRef(false);
-  const isVaultActive = vault?.status === "active";
   const effectiveVault = walletConnected ? vault : null;
   const effectiveTrades = walletConnected ? trades : [];
 
-  // Simulate real-time trade updates
-  useEffect(() => {
-    if (!isVaultActive) return;
-    const interval = setInterval(() => {
-      const newTrade: Trade = {
-        id: Math.random().toString(36).slice(2),
-        type: ["Swap", "Buy", "Sell"][
-          Math.floor(Math.random() * 3)
-        ] as Trade["type"],
-        amount: parseFloat((Math.random() * 0.5 + 0.1).toFixed(3)),
-        fee: 0.001,
-        status: Math.random() > 0.1 ? "success" : "failed",
-        timestamp: Date.now(),
-        txHash:
-          Math.random().toString(36).slice(2, 8) +
-          "..." +
-          Math.random().toString(36).slice(2, 6),
-      };
-      setTrades((prev) => [newTrade, ...prev.slice(0, 49)]);
-      setVault((prev) =>
-        prev
-          ? {
-              ...prev,
-              tradesExecuted: prev.tradesExecuted + 1,
-              currentBalance: parseFloat(
-                Math.max(
-                  0,
-                  prev.currentBalance - newTrade.amount * 0.3,
-                ).toFixed(3),
-              ),
-            }
-          : prev,
-      );
-      addToast(
-        `Trade executed: ${newTrade.amount} SOL ${newTrade.type.toLowerCase()}`,
-        "success",
-      );
-    }, 15000);
-    return () => clearInterval(interval);
-  }, [isVaultActive, addToast]);
+  const loadVault = useCallback(async () => {
+    if (!walletConnected || !walletAddress) return;
+
+    try {
+      const v = await apiGet<VaultAccount>(`/vault/${walletAddress}`);
+      setVault(v);
+      try {
+        const t = await apiGet<Trade[]>(`/trades/${v.address}?limit=50&offset=0`);
+        setTrades(t);
+      } catch (e) {
+        setTrades([]);
+      }
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) {
+        setVault(null);
+        setTrades([]);
+        return;
+      }
+      throw e;
+    }
+  }, [walletConnected, walletAddress]);
+
+  const sendBase64Tx = useCallback(
+    async (resp: TxResponse) => {
+      if (!walletConnected || !publicKey) {
+        addToast("Connect your wallet first", "warning");
+        return;
+      }
+
+      const tx = Transaction.from(Buffer.from(resp.transactionBase64, "base64"));
+      const sig = await sendTransaction(tx, connection);
+      await connection.confirmTransaction(sig, "confirmed");
+      return sig;
+    },
+    [walletConnected, publicKey, sendTransaction, connection, addToast],
+  );
 
   useEffect(() => {
     if (!hasSeenConnectionState.current) {
@@ -97,7 +104,16 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
     }
 
     addToast("Wallet disconnected", "info");
+    setVault(null);
+    setTrades([]);
   }, [walletConnected, addToast]);
+
+  useEffect(() => {
+    if (!walletConnected || !walletAddress) return;
+    loadVault().catch((e) => {
+      addToast(e instanceof Error ? e.message : "Failed to load vault", "error");
+    });
+  }, [walletConnected, walletAddress, loadVault, addToast]);
 
   const createVault = useCallback(
     async (params: CreateVaultParams) => {
@@ -106,122 +122,237 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       setIsLoading(true);
-      await new Promise((r) => setTimeout(r, 2000));
-      const newVault: VaultAccount = {
-        address: "Ev8u...4xPq",
-        owner: walletAddress,
-        delegate: params.delegate,
-        approvedAmount: params.approvedAmount,
-        currentBalance: params.initialDeposit,
-        totalDeposited: params.initialDeposit,
-        totalWithdrawn: 0,
-        tradesExecuted: 0,
-        sessionExpiry: Date.now() + params.sessionDuration * 60 * 1000,
-        status: "active",
-        createdAt: Date.now(),
-      };
-      setVault(newVault);
-      setTrades([]);
-      setIsLoading(false);
-      addToast("Vault created successfully!", "success");
+      try {
+        const resp = await apiPost<TxResponse>("/tx/create_vault", {
+          userPubkey: walletAddress,
+          approvedAmountLamports: lamportsFromSol(params.approvedAmount),
+          delegatePubkey: params.delegate?.trim() ? params.delegate.trim() : null,
+          customDurationSeconds:
+            params.sessionDuration && params.sessionDuration > 0
+              ? Math.round(params.sessionDuration * 60)
+              : null,
+          initialDepositLamports:
+            params.initialDeposit && params.initialDeposit > 0
+              ? lamportsFromSol(params.initialDeposit)
+              : null,
+        });
+        await sendBase64Tx(resp);
+        await loadVault();
+        addToast("Vault created successfully!", "success");
+      } catch (e) {
+        addToast(e instanceof Error ? e.message : "Create vault failed", "error");
+      } finally {
+        setIsLoading(false);
+      }
     },
-    [walletConnected, walletAddress, addToast],
+    [walletConnected, walletAddress, addToast, sendBase64Tx, loadVault],
   );
 
   const deposit = useCallback(
     async (amount: number) => {
       setIsLoading(true);
-      await new Promise((r) => setTimeout(r, 1500));
-      setVault((prev) =>
-        prev
-          ? {
-              ...prev,
-              currentBalance: parseFloat(
-                (prev.currentBalance + amount).toFixed(3),
-              ),
-              totalDeposited: parseFloat(
-                (prev.totalDeposited + amount).toFixed(3),
-              ),
-            }
-          : prev,
-      );
-      setIsLoading(false);
-      addToast(`Deposited ${amount} SOL to vault`, "success");
+      try {
+        if (!walletConnected || !walletAddress) {
+          addToast("Connect your wallet first", "warning");
+          return;
+        }
+        const resp = await apiPost<TxResponse>("/tx/deposit", {
+          userPubkey: walletAddress,
+          amountLamports: lamportsFromSol(amount),
+        });
+        await sendBase64Tx(resp);
+        await loadVault();
+        addToast(`Deposited ${amount} SOL to vault`, "success");
+      } catch (e) {
+        addToast(e instanceof Error ? e.message : "Deposit failed", "error");
+      } finally {
+        setIsLoading(false);
+      }
     },
-    [addToast],
+    [walletConnected, walletAddress, addToast, sendBase64Tx, loadVault],
   );
 
   const withdraw = useCallback(
     async (amount: number) => {
       setIsLoading(true);
-      await new Promise((r) => setTimeout(r, 1500));
-      setVault((prev) =>
-        prev
-          ? {
-              ...prev,
-              currentBalance: parseFloat(
-                Math.max(0, prev.currentBalance - amount).toFixed(3),
-              ),
-              totalWithdrawn: parseFloat(
-                (prev.totalWithdrawn + amount).toFixed(3),
-              ),
-            }
-          : prev,
-      );
-      setIsLoading(false);
-      addToast(`Withdrew ${amount} SOL from vault`, "success");
+      try {
+        if (!walletConnected || !walletAddress) {
+          addToast("Connect your wallet first", "warning");
+          return;
+        }
+        const resp = await apiPost<TxResponse>("/tx/withdraw", {
+          userPubkey: walletAddress,
+          amountLamports: amount > 0 ? lamportsFromSol(amount) : 0,
+        });
+        await sendBase64Tx(resp);
+        await loadVault();
+        addToast(
+          amount > 0 ? `Withdrew ${amount} SOL from vault` : "Withdrew all from vault",
+          "success",
+        );
+      } catch (e) {
+        addToast(e instanceof Error ? e.message : "Withdraw failed", "error");
+      } finally {
+        setIsLoading(false);
+      }
     },
-    [addToast],
+    [walletConnected, walletAddress, addToast, sendBase64Tx, loadVault],
   );
 
   const pauseVault = useCallback(async () => {
     setIsLoading(true);
-    await new Promise((r) => setTimeout(r, 1000));
-    setVault((prev) => (prev ? { ...prev, status: "paused" } : prev));
-    setIsLoading(false);
-    addToast("Vault paused — all trading stopped", "warning");
-  }, [addToast]);
+    try {
+      if (!walletConnected || !walletAddress) {
+        addToast("Connect your wallet first", "warning");
+        return;
+      }
+      const resp = await apiPost<TxResponse>("/tx/pause", {
+        userPubkey: walletAddress,
+      });
+      await sendBase64Tx(resp);
+      await loadVault();
+      addToast("Vault paused — all trading stopped", "warning");
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : "Pause failed", "error");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [walletConnected, walletAddress, addToast, sendBase64Tx, loadVault]);
 
   const unpauseVault = useCallback(async () => {
     setIsLoading(true);
-    await new Promise((r) => setTimeout(r, 1000));
-    setVault((prev) => (prev ? { ...prev, status: "active" } : prev));
-    setIsLoading(false);
-    addToast("Vault resumed", "success");
-  }, [addToast]);
+    try {
+      if (!walletConnected || !walletAddress) {
+        addToast("Connect your wallet first", "warning");
+        return;
+      }
+      const resp = await apiPost<TxResponse>("/tx/unpause", {
+        userPubkey: walletAddress,
+      });
+      await sendBase64Tx(resp);
+      await loadVault();
+      addToast("Vault resumed", "success");
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : "Unpause failed", "error");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [walletConnected, walletAddress, addToast, sendBase64Tx, loadVault]);
 
   const revokeAccess = useCallback(async () => {
     setIsLoading(true);
-    await new Promise((r) => setTimeout(r, 2000));
-    setVault((prev) =>
-      prev
-        ? {
-            ...prev,
-            status: "revoked",
-            currentBalance: 0,
-            totalWithdrawn: prev.totalWithdrawn + prev.currentBalance,
-          }
-        : prev,
-    );
-    setIsLoading(false);
-    addToast("Access revoked — funds returned to wallet", "info");
-  }, [addToast]);
+    try {
+      if (!walletConnected || !walletAddress) {
+        addToast("Connect your wallet first", "warning");
+        return;
+      }
+      const resp = await apiPost<TxResponse>("/tx/revoke", {
+        userPubkey: walletAddress,
+      });
+      await sendBase64Tx(resp);
+      await loadVault();
+      addToast("Access revoked — funds returned to wallet", "info");
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : "Revoke failed", "error");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [walletConnected, walletAddress, addToast, sendBase64Tx, loadVault]);
 
   const renewSession = useCallback(async () => {
     setIsLoading(true);
-    await new Promise((r) => setTimeout(r, 1000));
-    setVault((prev) =>
-      prev ? { ...prev, sessionExpiry: Date.now() + 60 * 60 * 1000 } : prev,
-    );
-    setIsLoading(false);
-    addToast("Session renewed for 1 hour", "success");
-  }, [addToast]);
+    try {
+      if (!walletConnected || !walletAddress) {
+        addToast("Connect your wallet first", "warning");
+        return;
+      }
+      const resp = await apiPost<TxResponse>("/tx/renew_session", {
+        userPubkey: walletAddress,
+      });
+      await sendBase64Tx(resp);
+      await loadVault();
+      addToast("Session renewed", "success");
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : "Renew session failed", "error");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [walletConnected, walletAddress, addToast, sendBase64Tx, loadVault]);
 
-  // Load demo vault when wallet connects
-  const loadDemo = useCallback(() => {
-    setVault(MOCK_VAULT);
-    setTrades(MOCK_TRADES);
-  }, []);
+  const approveDelegate = useCallback(
+    async (delegate: string, sessionDurationMinutes?: number) => {
+      setIsLoading(true);
+      try {
+        if (!walletConnected || !walletAddress) {
+          addToast("Connect your wallet first", "warning");
+          return;
+        }
+        const resp = await apiPost<TxResponse>("/tx/approve_delegate", {
+          userPubkey: walletAddress,
+          delegatePubkey: delegate,
+          customDurationSeconds:
+            sessionDurationMinutes && sessionDurationMinutes > 0
+              ? Math.round(sessionDurationMinutes * 60)
+              : null,
+        });
+        await sendBase64Tx(resp);
+        await loadVault();
+        addToast("Delegate approved", "success");
+      } catch (e) {
+        addToast(e instanceof Error ? e.message : "Approve delegate failed", "error");
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [walletConnected, walletAddress, addToast, sendBase64Tx, loadVault],
+  );
+
+  const reactivateVault = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      if (!walletConnected || !walletAddress) {
+        addToast("Connect your wallet first", "warning");
+        return;
+      }
+      const resp = await apiPost<TxResponse>("/tx/reactivate", {
+        userPubkey: walletAddress,
+      });
+      await sendBase64Tx(resp);
+      await loadVault();
+      addToast("Vault reactivated", "success");
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : "Reactivate failed", "error");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [walletConnected, walletAddress, addToast, sendBase64Tx, loadVault]);
+
+  const updateApprovedAmount = useCallback(
+    async (newApprovedAmount: number) => {
+      setIsLoading(true);
+      try {
+        if (!walletConnected || !walletAddress) {
+          addToast("Connect your wallet first", "warning");
+          return;
+        }
+        const resp = await apiPost<TxResponse>("/tx/update_approved_amount", {
+          userPubkey: walletAddress,
+          newApprovedAmountLamports: lamportsFromSol(newApprovedAmount),
+        });
+        await sendBase64Tx(resp);
+        await loadVault();
+        addToast("Approved amount updated", "success");
+      } catch (e) {
+        addToast(
+          e instanceof Error ? e.message : "Update approved amount failed",
+          "error",
+        );
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [walletConnected, walletAddress, addToast, sendBase64Tx, loadVault],
+  );
 
   return (
     <VaultContext.Provider
@@ -238,13 +369,12 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
         unpauseVault,
         revokeAccess,
         renewSession,
+        approveDelegate,
+        reactivateVault,
+        updateApprovedAmount,
       }}
     >
       {children}
-      {/* Hidden demo loader */}
-      {walletConnected && !effectiveVault && (
-        <button onClick={loadDemo} className="hidden" id="load-demo" />
-      )}
     </VaultContext.Provider>
   );
 }
