@@ -1,18 +1,32 @@
-import { VaultAccount, Trade, ActivityChartData } from './types';
+import { ActivityChartData, Trade, VaultAccount } from './types';
+
+const nowSeconds = Math.floor(Date.now() / 1000);
 
 export const MOCK_VAULT: VaultAccount = {
-  address: 'Ev8u...4xPq',
-  owner: '7hNm...3kRt',
-  delegate: '8xKd...m9Pq',
-  approvedAmount: 10.0,
-  currentBalance: 2.5,
-  totalDeposited: 5.0,
-  totalWithdrawn: 2.5,
-  tradesExecuted: 23,
-  lastActivity: Date.now() - 2 * 60 * 1000,
-  sessionExpiry: Date.now() + 45 * 60 * 1000, // 45 min from now
+  address: 'Ev8uMock4xPq',
+  owner: '7hNmMock3kRt',
+  delegate: '8xKdMockm9Pq',
+  approvedAmountLamports: 10_000_000_000,
+  availableAmountLamports: 2_500_000_000,
+  usedAmountLamports: 1_250_000_000,
+  totalDepositedLamports: 5_000_000_000,
+  totalWithdrawnLamports: 2_500_000_000,
+  approvedAmountSol: 10,
+  availableAmountSol: 2.5,
+  usedAmountSol: 1.25,
+  totalDepositedSol: 5,
+  totalWithdrawnSol: 2.5,
+  tradeCount: 23,
+  sessionExpiry: nowSeconds + 45 * 60,
+  delegatedAt: nowSeconds - 15 * 60,
+  createdAt: nowSeconds - 3 * 60 * 60,
+  lastActivity: nowSeconds - 2 * 60,
+  isActive: true,
+  isPaused: false,
+  sessionStatus: 'active',
   status: 'active',
-  createdAt: Date.now() - 3 * 60 * 60 * 1000,
+  version: 1,
+  bump: 255,
 };
 
 export const MOCK_TRADES: Trade[] = [

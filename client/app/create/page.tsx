@@ -220,7 +220,7 @@ export default function CreatePage() {
                   Session Duration
                 </label>
 
-                {[30, 60, 240].map((val) => (
+                {[15, 30, 60].map((val) => (
                   <button
                     key={val}
                     type="button"

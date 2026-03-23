@@ -1,21 +1,23 @@
-use backend::config::Config;
-use backend::{build_server, AppState};
-use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey};
-use sqlx::PgPool;
 use std::sync::Arc;
+
+use ephemeral_vault_backend::{build_server, config::Config, AppState};
+use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_sdk::commitment_config::CommitmentConfig;
+use sqlx::PgPool;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Load .env
     dotenv::dotenv().ok();
 
-    // Initialise tracing logger
-    tracing_subscriber::fmt().with_env_filter("info").init();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info,tower_http=info".into()),
+        )
+        .init();
 
     let config = Config::from_env();
 
-    // ── Database ───────────────────────────────────────────────────────────
     let db = PgPool::connect(&config.database_url)
         .await
         .expect("Failed to connect to PostgreSQL");
@@ -27,29 +29,19 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Database connected and migrations applied");
 
-    // ── Solana RPC ─────────────────────────────────────────────────────────
-    let rpc_client = Arc::new(RpcClient::new_with_commitment(
+    let rpc = Arc::new(RpcClient::new_with_commitment(
         config.rpc_url.clone(),
         CommitmentConfig::confirmed(),
     ));
 
-    let program_id = config
-        .program_id
-        .parse::<Pubkey>()
-        .expect("PROGRAM_ID is not a valid Solana pubkey");
+    tracing::info!("Solana RPC configured: {}", config.rpc_url);
+    tracing::info!("Program ID configured: {}", config.program_id);
 
-    tracing::info!("Solana RPC connected: {}", config.rpc_url);
-    tracing::info!("Program ID: {}", program_id);
-
-    // ── Shared application state ───────────────────────────────────────────
     let state = AppState {
-        db: db.clone(),
-        rpc: rpc_client,
-        program_id,
+        config: config.clone(),
+        db,
+        rpc,
     };
 
-    // ── HTTP server ────────────────────────────────────────────────────────
-    build_server(state, &config.server_host, config.server_port).await?;
-
-    Ok(())
+    build_server(state, &config.server_host, config.server_port).await
 }

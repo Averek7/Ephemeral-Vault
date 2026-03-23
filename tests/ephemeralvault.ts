@@ -218,6 +218,19 @@ describe("ephemeral_vault (TypeScript)", () => {
       assert.isAtMost(expiresAt, now + SESSION_DURATION_SECONDS + 15);
     });
 
+    it("rejects non-positive custom duration", async () => {
+      const f = await createFixture();
+
+      await expectError(
+        program.methods
+          .approveDelegate(f.delegate.publicKey, new BN(0))
+          .accounts({ user: f.user.publicKey, vault: f.vaultPda })
+          .signers([f.user])
+          .rpc(),
+        "InvalidSessionDuration",
+      );
+    });
+
     it("allows renewal only near expiry", async () => {
       const f = await createFixture();
 
@@ -370,6 +383,37 @@ describe("ephemeral_vault (TypeScript)", () => {
         f.delegate.publicKey.toBase58(),
       );
       assert.isNotNull(vault.sessionExpiresAt);
+    });
+
+    it("rejects cumulative trade amount above the approved limit", async () => {
+      const f = await createFixture(new BN(2_500_000));
+
+      await program.methods
+        .approveDelegate(f.delegate.publicKey, null)
+        .accounts({ user: f.user.publicKey, vault: f.vaultPda })
+        .signers([f.user])
+        .rpc();
+
+      await program.methods
+        .autoDepositForTrade(MIN_DEPOSIT_AMOUNT)
+        .accounts({ user: f.user.publicKey, vault: f.vaultPda })
+        .signers([f.user])
+        .rpc();
+
+      await program.methods
+        .executeTrade(new BN(1_000), new BN(1_500_000))
+        .accounts({ delegate: f.delegate.publicKey, vault: f.vaultPda })
+        .signers([f.delegate])
+        .rpc();
+
+      await expectError(
+        program.methods
+          .executeTrade(new BN(1_000), new BN(1_100_000))
+          .accounts({ delegate: f.delegate.publicKey, vault: f.vaultPda })
+          .signers([f.delegate])
+          .rpc(),
+        "TradeLimitExceeded",
+      );
     });
   });
 
@@ -550,6 +594,55 @@ describe("ephemeral_vault (TypeScript)", () => {
         .accounts({ vault: f.vaultPda })
         .view();
       assert.isDefined(stats.sessionStatus.expiringSoon);
+    });
+
+    it("rejects lowering approved amount below current available or used state", async () => {
+      const f = await createFixture(new BN(3 * LAMPORTS_PER_SOL));
+
+      await program.methods
+        .autoDepositForTrade(new BN(0.2 * LAMPORTS_PER_SOL))
+        .accounts({ user: f.user.publicKey, vault: f.vaultPda })
+        .signers([f.user])
+        .rpc();
+
+      await expectError(
+        program.methods
+          .updateApprovedAmount(new BN(0.1 * LAMPORTS_PER_SOL))
+          .accounts({ user: f.user.publicKey, vault: f.vaultPda })
+          .signers([f.user])
+          .rpc(),
+        "ApprovedAmountTooLow",
+      );
+
+      await program.methods
+        .approveDelegate(f.delegate.publicKey, null)
+        .accounts({ user: f.user.publicKey, vault: f.vaultPda })
+        .signers([f.user])
+        .rpc();
+
+      await program.methods
+        .executeTrade(new BN(100_000), new BN(1_000_000))
+        .accounts({ delegate: f.delegate.publicKey, vault: f.vaultPda })
+        .signers([f.delegate])
+        .rpc();
+
+      await expectError(
+        program.methods
+          .updateApprovedAmount(new BN(900_000))
+          .accounts({ user: f.user.publicKey, vault: f.vaultPda })
+          .signers([f.user])
+          .rpc(),
+        "InvalidApprovedAmount",
+      );
+
+      await expectError(
+        program.methods
+          .updateApprovedAmount(new BN(1_500_000))
+          .accounts({ user: f.user.publicKey, vault: f.vaultPda })
+          .signers([f.user])
+          .rpc(),
+        "ApprovedAmountTooLow",
+      );
     });
   });
 });

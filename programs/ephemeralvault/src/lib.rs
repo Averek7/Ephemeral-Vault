@@ -90,6 +90,7 @@ pub mod ephemeral_vault {
         let duration = custom_duration
             .unwrap_or(SESSION_DURATION)
             .min(SESSION_DURATION); // Cap at max duration
+        require!(duration > 0, EphemeralVaultError::InvalidSessionDuration);
 
         let expires_at = clock
             .unix_timestamp
@@ -131,6 +132,11 @@ pub mod ephemeral_vault {
         let expires_at = vault
             .session_expires_at
             .ok_or(EphemeralVaultError::NoActiveSession)?;
+
+        require!(
+            clock.unix_timestamp < expires_at,
+            EphemeralVaultError::SessionExpired
+        );
 
         // Check if within renewal window (5 minutes before expiry)
         let time_until_expiry = expires_at
@@ -187,12 +193,12 @@ pub mod ephemeral_vault {
         );
 
         // Check deposit limit
-        let new_total = vault
-            .total_deposited
+        let new_available_amount = vault
+            .available_amount
             .checked_add(trade_fee_estimate)
             .ok_or(EphemeralVaultError::MathOverflow)?;
         require!(
-            new_total <= vault.approved_amount,
+            new_available_amount <= vault.approved_amount,
             EphemeralVaultError::OverDeposit
         );
 
@@ -207,7 +213,10 @@ pub mod ephemeral_vault {
         transfer(cpi_context, trade_fee_estimate)?;
 
         // Update vault accounting
-        vault.total_deposited = new_total;
+        vault.total_deposited = vault
+            .total_deposited
+            .checked_add(trade_fee_estimate)
+            .ok_or(EphemeralVaultError::MathOverflow)?;
         vault.available_amount = vault
             .available_amount
             .checked_add(trade_fee_estimate)
@@ -265,16 +274,21 @@ pub mod ephemeral_vault {
             trade_amount > 0 && trade_amount <= vault.approved_amount,
             EphemeralVaultError::InvalidTradeAmount
         );
+        let new_used_amount = vault
+            .used_amount
+            .checked_add(trade_amount)
+            .ok_or(EphemeralVaultError::MathOverflow)?;
+        require!(
+            new_used_amount <= vault.approved_amount,
+            EphemeralVaultError::TradeLimitExceeded
+        );
 
         // Update vault state
         vault.available_amount = vault
             .available_amount
             .checked_sub(trade_fee)
             .ok_or(EphemeralVaultError::MathOverflow)?;
-        vault.used_amount = vault
-            .used_amount
-            .checked_add(trade_amount)
-            .ok_or(EphemeralVaultError::MathOverflow)?;
+        vault.used_amount = new_used_amount;
         vault.trade_count = vault
             .trade_count
             .checked_add(1)
@@ -312,10 +326,10 @@ pub mod ephemeral_vault {
 
         // If amount is 0, withdraw all
         let withdraw_amount = if amount == 0 {
-            max_withdrawable
+            vault.available_amount.min(max_withdrawable)
         } else {
             require!(
-                amount <= max_withdrawable,
+                amount <= vault.available_amount && amount <= max_withdrawable,
                 EphemeralVaultError::InsufficientFunds
             );
             amount
@@ -466,6 +480,11 @@ pub mod ephemeral_vault {
             new_approved_amount >= MIN_APPROVED_AMOUNT
                 && new_approved_amount <= MAX_APPROVED_AMOUNT,
             EphemeralVaultError::InvalidApprovedAmount
+        );
+        require!(
+            new_approved_amount >= vault.available_amount
+                && new_approved_amount >= vault.used_amount,
+            EphemeralVaultError::ApprovedAmountTooLow
         );
 
         let old_amount = vault.approved_amount;
@@ -652,7 +671,11 @@ pub struct CreateEphemeralVault<'info> {
 
 #[derive(Accounts)]
 pub struct ApproveDelegate<'info> {
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"vault", vault.user_wallet.as_ref()],
+        bump = vault.bump
+    )]
     pub vault: Account<'info, EphemeralVault>,
     #[account(mut)]
     pub user: Signer<'info>,
@@ -660,14 +683,22 @@ pub struct ApproveDelegate<'info> {
 
 #[derive(Accounts)]
 pub struct RenewSession<'info> {
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"vault", vault.user_wallet.as_ref()],
+        bump = vault.bump
+    )]
     pub vault: Account<'info, EphemeralVault>,
     pub user: Signer<'info>,
 }
 
 #[derive(Accounts)]
 pub struct AutoDeposit<'info> {
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"vault", vault.user_wallet.as_ref()],
+        bump = vault.bump
+    )]
     pub vault: Account<'info, EphemeralVault>,
     #[account(mut)]
     pub user: Signer<'info>,
@@ -676,14 +707,22 @@ pub struct AutoDeposit<'info> {
 
 #[derive(Accounts)]
 pub struct ExecuteTrade<'info> {
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"vault", vault.user_wallet.as_ref()],
+        bump = vault.bump
+    )]
     pub vault: Account<'info, EphemeralVault>,
     pub delegate: Signer<'info>,
 }
 
 #[derive(Accounts)]
 pub struct WithdrawBalance<'info> {
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"vault", vault.user_wallet.as_ref()],
+        bump = vault.bump
+    )]
     pub vault: Account<'info, EphemeralVault>,
     #[account(mut)]
     pub user: Signer<'info>,
@@ -691,7 +730,11 @@ pub struct WithdrawBalance<'info> {
 
 #[derive(Accounts)]
 pub struct RevokeAccess<'info> {
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"vault", vault.user_wallet.as_ref()],
+        bump = vault.bump
+    )]
     pub vault: Account<'info, EphemeralVault>,
     #[account(mut)]
     pub user: Signer<'info>,
@@ -699,35 +742,55 @@ pub struct RevokeAccess<'info> {
 
 #[derive(Accounts)]
 pub struct ReactivateVault<'info> {
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"vault", vault.user_wallet.as_ref()],
+        bump = vault.bump
+    )]
     pub vault: Account<'info, EphemeralVault>,
     pub user: Signer<'info>,
 }
 
 #[derive(Accounts)]
 pub struct UpdateApprovedAmount<'info> {
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"vault", vault.user_wallet.as_ref()],
+        bump = vault.bump
+    )]
     pub vault: Account<'info, EphemeralVault>,
     pub user: Signer<'info>,
 }
 
 #[derive(Accounts)]
 pub struct EmergencyPause<'info> {
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"vault", vault.user_wallet.as_ref()],
+        bump = vault.bump
+    )]
     pub vault: Account<'info, EphemeralVault>,
     pub user: Signer<'info>,
 }
 
 #[derive(Accounts)]
 pub struct UnpauseVault<'info> {
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"vault", vault.user_wallet.as_ref()],
+        bump = vault.bump
+    )]
     pub vault: Account<'info, EphemeralVault>,
     pub user: Signer<'info>,
 }
 
 #[derive(Accounts)]
 pub struct CleanupVault<'info> {
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"vault", vault.user_wallet.as_ref()],
+        bump = vault.bump
+    )]
     pub vault: Account<'info, EphemeralVault>,
     /// CHECK: vault.user_wallet validated from vault data
     #[account(mut, address = vault.user_wallet)]
@@ -738,6 +801,10 @@ pub struct CleanupVault<'info> {
 
 #[derive(Accounts)]
 pub struct GetVaultStats<'info> {
+    #[account(
+        seeds = [b"vault", vault.user_wallet.as_ref()],
+        bump = vault.bump
+    )]
     pub vault: Account<'info, EphemeralVault>,
 }
 
@@ -941,4 +1008,13 @@ pub enum EphemeralVaultError {
 
     #[msg("Cannot delegate to self")]
     InvalidDelegate,
+
+    #[msg("Session duration must be greater than zero")]
+    InvalidSessionDuration,
+
+    #[msg("Cumulative trade amount exceeds approved limit")]
+    TradeLimitExceeded,
+
+    #[msg("Approved amount cannot be lower than current vault state")]
+    ApprovedAmountTooLow,
 }

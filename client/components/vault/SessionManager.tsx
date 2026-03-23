@@ -1,38 +1,39 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { Timer, RefreshCw, ShieldOff, Activity } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { Activity, RefreshCw, ShieldOff, Timer } from "lucide-react";
+
 import { Card, CardHeader } from "@/components/common/Card";
 import { Button } from "@/components/common/Button";
+import { RevokeModal } from "@/components/modals/RevokeModal";
 import { useVault } from "@/contexts/VaultContext";
 import {
   formatCountdown,
   getSecondsRemaining,
   getTimerColor,
   getTimerPercent,
-  formatTimestamp,
 } from "@/lib/mock";
-import { RevokeModal } from "@/components/modals/RevokeModal";
 
 export function SessionManager() {
   const { vault, renewSession, isLoading } = useVault();
   const [seconds, setSeconds] = useState(0);
   const [showRevoke, setShowRevoke] = useState(false);
-  const sessionExpiry = vault?.sessionExpiry;
+  const sessionExpiryMs = vault?.sessionExpiry ? vault.sessionExpiry * 1000 : null;
 
   useEffect(() => {
-    if (!sessionExpiry) return;
-    const tick = () => setSeconds(getSecondsRemaining(sessionExpiry));
+    if (!sessionExpiryMs) return;
+    const tick = () => setSeconds(getSecondsRemaining(sessionExpiryMs));
     tick();
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [sessionExpiry]);
+  }, [sessionExpiryMs]);
 
   if (!vault) return null;
 
   const color = getTimerColor(seconds);
-  const pct = getTimerPercent(60, seconds);
-  const isExpiringSoon = seconds < 5 * 60;
+  const pct = getTimerPercent(60, Math.max(0, seconds));
+  const isExpiringSoon = vault.sessionStatus === "expiring_soon";
+  const lastActivityMs = (vault.lastActivity || vault.createdAt) * 1000;
 
   return (
     <>
@@ -44,14 +45,13 @@ export function SessionManager() {
             <span className="text-xs text-vault-muted">
               Last activity:{" "}
               <span className="text-white/70">
-                {formatTimestamp(vault.lastActivity || vault.createdAt)}
+                {new Date(lastActivityMs).toLocaleString()}
               </span>
             </span>
           }
         />
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
-          {/* Timer */}
+        <div className="grid grid-cols-1 gap-4 mb-5 md:grid-cols-2">
           <div className="p-4 rounded-xl bg-vault-bg/50 border border-vault-border/50 flex flex-col items-center gap-2">
             <div className="relative w-24 h-24">
               <svg className="w-full h-full -rotate-90" viewBox="0 0 100 100">
@@ -97,14 +97,13 @@ export function SessionManager() {
             )}
           </div>
 
-          {/* Delegate info */}
           <div className="p-4 rounded-xl bg-vault-bg/50 border border-vault-border/50 space-y-3">
             <div>
               <p className="text-xs text-vault-muted mb-1 uppercase tracking-wide">
                 Delegate Bot
               </p>
               <p className="text-sm font-bold mono text-white">
-                {vault.delegate || "—"}
+                {vault.delegate ?? "--"}
               </p>
             </div>
             <div>
@@ -112,13 +111,13 @@ export function SessionManager() {
                 Status
               </p>
               {vault.status === "active" ? (
-                <span className="inline-flex items-center gap-1.5 text-xs badge-active px-2 py-1 rounded-full">
+                <span className="inline-flex items-center gap-1.5 text-xs badge-active px-2 py-1 rounded-full capitalize">
                   <Activity size={10} className="pulse-dot" />
-                  Active
+                  {vault.sessionStatus.replaceAll("_", " ")}
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-full border border-vault-border text-vault-muted">
-                  {vault.status}
+                <span className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-full border border-vault-border text-vault-muted capitalize">
+                  {vault.status.replaceAll("_", " ")}
                 </span>
               )}
             </div>
@@ -127,7 +126,9 @@ export function SessionManager() {
                 Expires
               </p>
               <p className="text-xs text-white/70 mono">
-                {new Date(vault.sessionExpiry).toLocaleTimeString()}
+                {sessionExpiryMs
+                  ? new Date(sessionExpiryMs).toLocaleTimeString()
+                  : "No session"}
               </p>
             </div>
           </div>
@@ -139,6 +140,7 @@ export function SessionManager() {
             variant="outline-green"
             onClick={renewSession}
             loading={isLoading}
+            disabled={!vault.sessionExpiry}
           >
             <RefreshCw size={14} /> Renew Session
           </Button>

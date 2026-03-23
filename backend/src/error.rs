@@ -32,6 +32,9 @@ pub enum AppError {
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 
+    #[error("Serialization error: {0}")]
+    SerializationMessage(String),
+
     #[error("Internal error: {0}")]
     Internal(String),
 }

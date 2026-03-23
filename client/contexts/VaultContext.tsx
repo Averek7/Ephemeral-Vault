@@ -8,7 +8,12 @@ import React, {
   useEffect,
   useRef,
 } from "react";
-import { VaultAccount, Trade, CreateVaultParams } from "@/lib/types";
+import {
+  BackendTradeRecord,
+  CreateVaultParams,
+  Trade,
+  VaultAccount,
+} from "@/lib/types";
 import { useNotification } from "./NotificationContext";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { Transaction } from "@solana/web3.js";
@@ -42,6 +47,34 @@ function lamportsFromSol(sol: number): number {
   return Math.round(sol * 1_000_000_000);
 }
 
+function decodeBase64Tx(base64: string): Uint8Array {
+  const binary = window.atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function normalizeTradeType(tradeType: string): Trade["type"] {
+  const normalized = tradeType.trim().toLowerCase();
+  if (normalized === "buy") return "Buy";
+  if (normalized === "sell") return "Sell";
+  return "Swap";
+}
+
+function toTrade(record: BackendTradeRecord): Trade {
+  return {
+    id: record.id,
+    type: normalizeTradeType(record.trade_type),
+    amount: record.amount_sol,
+    fee: record.fee_sol,
+    status: record.status,
+    timestamp: new Date(record.created_at).getTime(),
+    txHash: record.tx_hash,
+  };
+}
+
 export function VaultProvider({ children }: { children: React.ReactNode }) {
   const [vault, setVault] = useState<VaultAccount | null>(null);
   const [trades, setTrades] = useState<Trade[]>([]);
@@ -62,8 +95,10 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
       const v = await apiGet<VaultAccount>(`/vault/${walletAddress}`);
       setVault(v);
       try {
-        const t = await apiGet<Trade[]>(`/trades/${v.address}?limit=50&offset=0`);
-        setTrades(t);
+        const t = await apiGet<BackendTradeRecord[]>(
+          `/trades/${v.address}?limit=50&offset=0`,
+        );
+        setTrades(t.map(toTrade));
       } catch (e) {
         setTrades([]);
       }
@@ -84,7 +119,7 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      const tx = Transaction.from(Buffer.from(resp.transactionBase64, "base64"));
+      const tx = Transaction.from(decodeBase64Tx(resp.transactionBase64));
       const sig = await sendTransaction(tx, connection);
       await connection.confirmTransaction(sig, "confirmed");
       return sig;
