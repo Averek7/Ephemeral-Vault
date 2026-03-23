@@ -1,81 +1,23 @@
-use crate::error::{AppError, Result};
-use base64::Engine;
-use borsh::{BorshDeserialize, BorshSerialize};
-use sha2::{Digest, Sha256};
+use anchor_lang::AnchorDeserialize;
+use serde::Serialize;
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::hash::Hash;
-use solana_sdk::instruction::{AccountMeta, Instruction};
-use solana_sdk::message::Message;
 use solana_sdk::pubkey::Pubkey;
-use solana_sdk::system_program;
-use solana_sdk::transaction::Transaction;
 
-pub const LAMPORTS_PER_SOL: u64 = 1_000_000_000;
+use crate::config::Config;
+use crate::error::{AppError, Result};
 
-fn anchor_discriminator(prefix: &str, name: &str) -> [u8; 8] {
-    let preimage = format!("{prefix}:{name}");
-    let hash = Sha256::digest(preimage.as_bytes());
-    hash[..8].try_into().expect("slice is 8 bytes")
-}
+const LAMPORTS_PER_SOL: f64 = 1_000_000_000.0;
 
-fn ix_data(method: &str, args: Vec<u8>) -> Vec<u8> {
-    let mut out = Vec::with_capacity(8 + args.len());
-    out.extend_from_slice(&anchor_discriminator("global", method));
-    out.extend_from_slice(&args);
-    out
-}
-
-fn account_discriminator(name: &str) -> [u8; 8] {
-    anchor_discriminator("account", name)
-}
-
-pub fn derive_vault_pda(program_id: &Pubkey, user: &Pubkey) -> (Pubkey, u8) {
-    Pubkey::find_program_address(&[b"vault", user.as_ref()], program_id)
-}
-
-pub async fn latest_blockhash(rpc: &RpcClient) -> Result<Hash> {
-    rpc.get_latest_blockhash()
-        .await
-        .map_err(|e| AppError::SolanaRpc(e.to_string()))
-}
-
-pub fn build_anchor_instruction(
-    program_id: Pubkey,
-    method: &str,
-    accounts: Vec<AccountMeta>,
-    args_borsh: Vec<u8>,
-) -> Instruction {
-    Instruction {
-        program_id,
-        accounts,
-        data: ix_data(method, args_borsh),
-    }
-}
-
-pub fn build_unsigned_tx_base64(
-    fee_payer: Pubkey,
-    instructions: Vec<Instruction>,
-    recent_blockhash: Hash,
-) -> Result<String> {
-    let message = Message::new(&instructions, Some(&fee_payer));
-    let mut tx = Transaction::new_unsigned(message);
-    tx.message.recent_blockhash = recent_blockhash;
-
-    let bytes =
-        bincode::serialize(&tx).map_err(|e| AppError::Internal(e.to_string()))?;
-    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
-}
-
-#[derive(Debug, Clone, BorshDeserialize)]
-pub struct EphemeralVault {
-    pub user_wallet: [u8; 32],
-    pub vault_pda: [u8; 32],
+#[derive(Clone, Debug, AnchorDeserialize)]
+pub struct EphemeralVaultAccount {
+    pub user_wallet: Pubkey,
+    pub vault_pda: Pubkey,
     pub created_at: i64,
     pub last_activity: i64,
     pub approved_amount: u64,
     pub used_amount: u64,
     pub available_amount: u64,
-    pub delegate_wallet: Option<[u8; 32]>,
+    pub delegate_wallet: Option<Pubkey>,
     pub delegated_at: Option<i64>,
     pub session_expires_at: Option<i64>,
     pub total_deposited: u64,
@@ -87,84 +29,200 @@ pub struct EphemeralVault {
     pub bump: u8,
 }
 
-pub fn decode_ephemeral_vault_account(data: &[u8]) -> Result<EphemeralVault> {
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultDto {
+    pub address: String,
+    pub owner: String,
+    pub delegate: Option<String>,
+    pub approved_amount_lamports: u64,
+    pub available_amount_lamports: u64,
+    pub used_amount_lamports: u64,
+    pub total_deposited_lamports: u64,
+    pub total_withdrawn_lamports: u64,
+    pub approved_amount_sol: f64,
+    pub available_amount_sol: f64,
+    pub used_amount_sol: f64,
+    pub total_deposited_sol: f64,
+    pub total_withdrawn_sol: f64,
+    pub trade_count: u64,
+    pub session_expiry: Option<i64>,
+    pub delegated_at: Option<i64>,
+    pub created_at: i64,
+    pub last_activity: i64,
+    pub is_active: bool,
+    pub is_paused: bool,
+    pub session_status: SessionStatusDto,
+    pub status: VaultStatusDto,
+    pub version: u8,
+    pub bump: u8,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionStatusDto {
+    NoSession,
+    Active,
+    ExpiringSoon,
+    Expired,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VaultStatusDto {
+    Active,
+    Paused,
+    Inactive,
+    Expired,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultStatsDto {
+    pub approved_amount_lamports: u64,
+    pub available_amount_lamports: u64,
+    pub used_amount_lamports: u64,
+    pub total_deposited_lamports: u64,
+    pub total_withdrawn_lamports: u64,
+    pub trade_count: u64,
+    pub is_active: bool,
+    pub is_paused: bool,
+    pub session_expiry: Option<i64>,
+    pub session_status: SessionStatusDto,
+    pub status: VaultStatusDto,
+}
+
+fn to_sol(lamports: u64) -> f64 {
+    lamports as f64 / LAMPORTS_PER_SOL
+}
+
+pub fn derive_vault_pda(program_id: &Pubkey, user: &Pubkey) -> (Pubkey, u8) {
+    Pubkey::find_program_address(&[b"vault", user.as_ref()], program_id)
+}
+
+fn parse_vault_account(data: &[u8]) -> Result<EphemeralVaultAccount> {
     if data.len() < 8 {
-        return Err(AppError::Internal("account data too short".into()));
+        return Err(AppError::Internal("vault account is too small".into()));
     }
-    let expected = account_discriminator("EphemeralVault");
-    if data[..8] != expected {
-        return Err(AppError::Internal("unexpected account discriminator".into()));
+
+    let mut bytes = &data[8..];
+    EphemeralVaultAccount::deserialize(&mut bytes)
+        .map_err(|e| AppError::SerializationMessage(format!("failed to decode vault account: {e}")))
+}
+
+fn session_status(vault: &EphemeralVaultAccount, now_ts: i64) -> SessionStatusDto {
+    match vault.session_expires_at {
+        None => SessionStatusDto::NoSession,
+        Some(expires_at) if now_ts >= expires_at => SessionStatusDto::Expired,
+        Some(expires_at) if expires_at - now_ts <= 300 => SessionStatusDto::ExpiringSoon,
+        Some(_) => SessionStatusDto::Active,
     }
-    let mut slice = &data[8..];
-    EphemeralVault::deserialize(&mut slice)
-        .map_err(|e| AppError::Internal(format!("borsh decode failed: {e}")))
 }
 
-pub fn sol_from_lamports(lamports: u64) -> f64 {
-    (lamports as f64) / (LAMPORTS_PER_SOL as f64)
+fn vault_status(vault: &EphemeralVaultAccount, session_status: SessionStatusDto) -> VaultStatusDto {
+    if !vault.is_active {
+        VaultStatusDto::Inactive
+    } else if vault.is_paused {
+        VaultStatusDto::Paused
+    } else if matches!(session_status, SessionStatusDto::Expired) {
+        VaultStatusDto::Expired
+    } else {
+        VaultStatusDto::Active
+    }
 }
 
-// --------------------------
-// Anchor instruction args
-// --------------------------
+pub fn to_vault_dto(vault_pubkey: Pubkey, vault: EphemeralVaultAccount, now_ts: i64) -> VaultDto {
+    let session_status = session_status(&vault, now_ts);
+    let status = vault_status(&vault, session_status);
 
-#[derive(BorshSerialize)]
-pub struct CreateEphemeralVaultArgs {
-    pub approved_amount: u64,
+    VaultDto {
+        address: vault_pubkey.to_string(),
+        owner: vault.user_wallet.to_string(),
+        delegate: vault.delegate_wallet.map(|pk| pk.to_string()),
+        approved_amount_lamports: vault.approved_amount,
+        available_amount_lamports: vault.available_amount,
+        used_amount_lamports: vault.used_amount,
+        total_deposited_lamports: vault.total_deposited,
+        total_withdrawn_lamports: vault.total_withdrawn,
+        approved_amount_sol: to_sol(vault.approved_amount),
+        available_amount_sol: to_sol(vault.available_amount),
+        used_amount_sol: to_sol(vault.used_amount),
+        total_deposited_sol: to_sol(vault.total_deposited),
+        total_withdrawn_sol: to_sol(vault.total_withdrawn),
+        trade_count: vault.trade_count,
+        session_expiry: vault.session_expires_at,
+        delegated_at: vault.delegated_at,
+        created_at: vault.created_at,
+        last_activity: vault.last_activity,
+        is_active: vault.is_active,
+        is_paused: vault.is_paused,
+        session_status,
+        status,
+        version: vault.version,
+        bump: vault.bump,
+    }
 }
 
-#[derive(BorshSerialize)]
-pub struct ApproveDelegateArgs {
-    pub delegate: Pubkey,
-    pub custom_duration: Option<i64>,
+pub fn to_vault_stats_dto(vault: &EphemeralVaultAccount, now_ts: i64) -> VaultStatsDto {
+    let session_status = session_status(vault, now_ts);
+    let status = vault_status(vault, session_status);
+
+    VaultStatsDto {
+        approved_amount_lamports: vault.approved_amount,
+        available_amount_lamports: vault.available_amount,
+        used_amount_lamports: vault.used_amount,
+        total_deposited_lamports: vault.total_deposited,
+        total_withdrawn_lamports: vault.total_withdrawn,
+        trade_count: vault.trade_count,
+        is_active: vault.is_active,
+        is_paused: vault.is_paused,
+        session_expiry: vault.session_expires_at,
+        session_status,
+        status,
+    }
 }
 
-#[derive(BorshSerialize)]
-pub struct AutoDepositArgs {
-    pub trade_fee_estimate: u64,
+pub async fn fetch_vault_by_user(
+    rpc: &RpcClient,
+    config: &Config,
+    user_pubkey: Pubkey,
+) -> Result<VaultDto> {
+    let program_id = config
+        .program_id
+        .parse::<Pubkey>()
+        .map_err(|e| AppError::Internal(format!("invalid PROGRAM_ID: {e}")))?;
+    let (vault_pda, _) = derive_vault_pda(&program_id, &user_pubkey);
+
+    let account = rpc
+        .get_account(&vault_pda)
+        .await
+        .map_err(|e| AppError::VaultNotFound(format!("{vault_pda}: {e}")))?;
+
+    let vault = parse_vault_account(&account.data)?;
+    let now_ts = rpc
+        .get_latest_blockhash()
+        .await
+        .map(|_| chrono::Utc::now().timestamp())
+        .unwrap_or_else(|_| chrono::Utc::now().timestamp());
+
+    Ok(to_vault_dto(vault_pda, vault, now_ts))
 }
 
-#[derive(BorshSerialize)]
-pub struct WithdrawBalanceArgs {
-    pub amount: u64,
-}
+pub async fn fetch_vault_stats_by_user(
+    rpc: &RpcClient,
+    config: &Config,
+    user_pubkey: Pubkey,
+) -> Result<VaultStatsDto> {
+    let program_id = config
+        .program_id
+        .parse::<Pubkey>()
+        .map_err(|e| AppError::Internal(format!("invalid PROGRAM_ID: {e}")))?;
+    let (vault_pda, _) = derive_vault_pda(&program_id, &user_pubkey);
 
-#[derive(BorshSerialize)]
-pub struct ExecuteTradeArgs {
-    pub trade_fee: u64,
-    pub trade_amount: u64,
-}
-
-#[derive(BorshSerialize)]
-pub struct UpdateApprovedAmountArgs {
-    pub new_approved_amount: u64,
-}
-
-// Convenience metas
-pub fn meta_user_signer_writable(user: Pubkey) -> AccountMeta {
-    AccountMeta::new(user, true)
-}
-
-pub fn meta_user_signer_readonly(user: Pubkey) -> AccountMeta {
-    AccountMeta::new_readonly(user, true)
-}
-
-pub fn meta_vault_writable(vault: Pubkey) -> AccountMeta {
-    AccountMeta::new(vault, false)
-}
-
-pub fn meta_writable(pubkey: Pubkey) -> AccountMeta {
-    AccountMeta::new(pubkey, false)
-}
-
-pub fn meta_signer_writable(pubkey: Pubkey) -> AccountMeta {
-    AccountMeta::new(pubkey, true)
-}
-
-pub fn meta_signer_readonly(pubkey: Pubkey) -> AccountMeta {
-    AccountMeta::new_readonly(pubkey, true)
-}
-
-pub fn meta_system_program() -> AccountMeta {
-    AccountMeta::new_readonly(system_program::ID, false)
+    let account = rpc
+        .get_account(&vault_pda)
+        .await
+        .map_err(|e| AppError::VaultNotFound(format!("{vault_pda}: {e}")))?;
+    let vault = parse_vault_account(&account.data)?;
+    Ok(to_vault_stats_dto(&vault, chrono::Utc::now().timestamp()))
 }

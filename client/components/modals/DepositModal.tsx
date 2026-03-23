@@ -21,8 +21,8 @@ export function DepositModal({ isOpen, onClose }: DepositModalProps) {
   if (!vault) return null;
 
   const amountNum = parseFloat(amount) || 0;
-  const afterDeposit = vault.currentBalance + amountNum;
-  const remainingApproved = vault.approvedAmount - vault.currentBalance;
+  const afterDeposit = vault.availableAmountSol + amountNum;
+  const remainingApproved = vault.approvedAmountSol - vault.availableAmountSol;
   const withinLimit = amountNum <= remainingApproved;
   const withinBalance = amountNum <= walletBalance;
   const valid = amountNum > 0 && withinLimit && withinBalance;
@@ -58,7 +58,7 @@ export function DepositModal({ isOpen, onClose }: DepositModalProps) {
           <div className="rounded-lg bg-vault-bg border border-vault-border p-4 space-y-2 text-sm">
             <InfoRow
               label="Current Vault"
-              value={`${formatSOL(vault.currentBalance)} SOL`}
+              value={`${formatSOL(vault.availableAmountSol)} SOL`}
             />
             <InfoRow
               label="Depositing"
@@ -74,7 +74,7 @@ export function DepositModal({ isOpen, onClose }: DepositModalProps) {
             </div>
             <InfoRow
               label="Approved Limit"
-              value={`${formatSOL(vault.approvedAmount)} SOL`}
+              value={`${formatSOL(vault.approvedAmountSol)} SOL`}
             />
             <InfoRow
               label="Remaining"

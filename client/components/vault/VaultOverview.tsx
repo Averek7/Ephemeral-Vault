@@ -18,8 +18,8 @@ export function VaultOverview() {
 
   if (!vault) return null;
 
-  const utilizationPct = vault.approvedAmount > 0
-    ? (vault.currentBalance / vault.approvedAmount) * 100
+  const utilizationPct = vault.approvedAmountSol > 0
+    ? (vault.availableAmountSol / vault.approvedAmountSol) * 100
     : 0;
 
   const statusColor = vault.status === 'active' ? '#14F195'
@@ -49,23 +49,23 @@ export function VaultOverview() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
           <StatBox
             label="Available"
-            value={formatSOL(vault.currentBalance) + ' SOL'}
-            sub={`of ${formatSOL(vault.approvedAmount)} SOL`}
+            value={formatSOL(vault.availableAmountSol) + ' SOL'}
+            sub={`of ${formatSOL(vault.approvedAmountSol)} SOL`}
             color="green"
           />
           <StatBox
             label="Total Deposited"
-            value={formatSOL(vault.totalDeposited) + ' SOL'}
+            value={formatSOL(vault.totalDepositedSol) + ' SOL'}
             color="purple"
           />
           <StatBox
             label="Total Withdrawn"
-            value={formatSOL(vault.totalWithdrawn) + ' SOL'}
+            value={formatSOL(vault.totalWithdrawnSol) + ' SOL'}
             color="muted"
           />
           <StatBox
             label="Trades"
-            value={vault.tradesExecuted.toString()}
+            value={vault.tradeCount.toString()}
             sub="executed"
             color="coral"
             icon={<TrendingUp size={12} />}
