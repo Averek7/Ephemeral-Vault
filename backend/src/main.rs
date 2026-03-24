@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use ephemeral_vault_backend::{build_server, config::Config, AppState};
+use backend::{build_server, config::Config, AppState};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::commitment_config::CommitmentConfig;
 use sqlx::PgPool;

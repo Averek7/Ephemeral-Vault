@@ -1,4 +1,5 @@
-use anchor_lang::{AnchorDeserialize, InstructionData, ToAccountMetas};
+use anchor_lang::{InstructionData, ToAccountMetas};
+use borsh::BorshDeserialize;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use serde::Serialize;
 use solana_client::nonblocking::rpc_client::RpcClient;
@@ -16,7 +17,7 @@ use crate::error::{AppError, Result};
 const LAMPORTS_PER_SOL: f64 = 1_000_000_000.0;
 const RENEWAL_WINDOW_SECONDS: i64 = 300;
 
-#[derive(Clone, Debug, AnchorDeserialize)]
+#[derive(Clone, Debug, BorshDeserialize)]
 pub struct EphemeralVaultAccount {
     pub user_wallet: Pubkey,
     pub vault_pda: Pubkey,
@@ -344,6 +345,46 @@ fn unpause_instruction(program_id: Pubkey, user: Pubkey, vault_pda: Pubkey) -> I
     }
 }
 
+fn execute_trade_instruction(
+    program_id: Pubkey,
+    delegate: Pubkey,
+    vault_pda: Pubkey,
+    trade_fee: u64,
+    trade_amount: u64,
+) -> Instruction {
+    Instruction {
+        program_id,
+        accounts: ephemeralvault::accounts::ExecuteTrade {
+            vault: vault_pda,
+            delegate,
+        }
+        .to_account_metas(None),
+        data: ephemeralvault::instruction::ExecuteTrade {
+            trade_fee,
+            trade_amount,
+        }
+        .data(),
+    }
+}
+
+fn cleanup_instruction(
+    program_id: Pubkey,
+    vault_pda: Pubkey,
+    user_wallet: Pubkey,
+    cleaner: Pubkey,
+) -> Instruction {
+    Instruction {
+        program_id,
+        accounts: ephemeralvault::accounts::CleanupVault {
+            vault: vault_pda,
+            user_wallet,
+            cleaner,
+        }
+        .to_account_metas(None),
+        data: ephemeralvault::instruction::CleanupVault {}.data(),
+    }
+}
+
 pub async fn fetch_vault_by_user(
     rpc: &RpcClient,
     config: &Config,
@@ -550,6 +591,55 @@ pub async fn build_update_approved_amount_tx(
             user,
             vault_pda,
             new_approved_amount_lamports,
+        )],
+        latest_blockhash(rpc).await?,
+        vault_pda,
+    )
+}
+
+pub async fn build_execute_trade_tx(
+    rpc: &RpcClient,
+    config: &Config,
+    vault_pda: Pubkey,
+    delegate: Pubkey,
+    trade_fee_lamports: u64,
+    trade_amount_lamports: u64,
+) -> Result<TxEnvelope> {
+    let program_id = program_id(config)?;
+    encode_transaction(
+        delegate,
+        vec![execute_trade_instruction(
+            program_id,
+            delegate,
+            vault_pda,
+            trade_fee_lamports,
+            trade_amount_lamports,
+        )],
+        latest_blockhash(rpc).await?,
+        vault_pda,
+    )
+}
+
+pub async fn build_cleanup_tx(
+    rpc: &RpcClient,
+    config: &Config,
+    vault_pda: Pubkey,
+    cleaner: Pubkey,
+) -> Result<TxEnvelope> {
+    let program_id = program_id(config)?;
+    let account = rpc
+        .get_account(&vault_pda)
+        .await
+        .map_err(|e| AppError::VaultNotFound(format!("{vault_pda}: {e}")))?;
+    let vault = parse_vault_account(&account.data)?;
+
+    encode_transaction(
+        cleaner,
+        vec![cleanup_instruction(
+            program_id,
+            vault_pda,
+            vault.user_wallet,
+            cleaner,
         )],
         latest_blockhash(rpc).await?,
         vault_pda,

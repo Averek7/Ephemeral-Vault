@@ -22,5 +22,7 @@ pub fn router(state: AppState) -> Router {
             "/tx/update_approved_amount",
             post(handlers::tx_update_approved_amount),
         )
+        .route("/tx/execute_trade", post(handlers::tx_execute_trade))
+        .route("/tx/cleanup", post(handlers::tx_cleanup))
         .with_state(state)
 }
