@@ -29,7 +29,14 @@ async function airdrop(
     pubkey,
     sol * LAMPORTS_PER_SOL,
   );
-  await provider.connection.confirmTransaction(sig, "confirmed");
+  const latestBlockhash = await provider.connection.getLatestBlockhash();
+  await provider.connection.confirmTransaction(
+    {
+      signature: sig,
+      ...latestBlockhash,
+    },
+    "confirmed",
+  );
 }
 
 function deriveVaultPda(
@@ -61,6 +68,38 @@ async function expectError(promise: Promise<unknown>, code: string) {
   } catch (err) {
     assert.strictEqual(getErrorCode(err), code);
   }
+}
+
+async function cleanupVaultEventually(
+  program: Program<EphemeralVault>,
+  fixture: Fixture,
+  attempts = 6,
+) {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      await program.methods
+        .cleanupVault()
+        .accounts({
+          vault: fixture.vaultPda,
+          userWallet: fixture.user.publicKey,
+          cleaner: fixture.cleaner.publicKey,
+        })
+        .signers([fixture.cleaner])
+        .rpc();
+      return;
+    } catch (err) {
+      if (getErrorCode(err) !== "SessionNotExpired") {
+        throw err;
+      }
+
+      lastError = err;
+      await sleep(1000);
+    }
+  }
+
+  throw lastError;
 }
 
 type Fixture = {
@@ -213,9 +252,9 @@ describe("ephemeral_vault (TypeScript)", () => {
         .rpc();
 
       const vault = await program.account.ephemeralVault.fetch(f.vaultPda);
-      const now = Math.floor(Date.now() / 1000);
+      const delegatedAt = vault.delegatedAt!.toNumber();
       const expiresAt = vault.sessionExpiresAt!.toNumber();
-      assert.isAtMost(expiresAt, now + SESSION_DURATION_SECONDS + 15);
+      assert.isAtMost(expiresAt - delegatedAt, SESSION_DURATION_SECONDS);
     });
 
     it("rejects non-positive custom duration", async () => {
@@ -252,7 +291,8 @@ describe("ephemeral_vault (TypeScript)", () => {
         .signers([f.user])
         .rpc();
 
-      await sleep(2500);
+      const beforeRenewal = await program.account.ephemeralVault.fetch(f.vaultPda);
+      await sleep(4000);
 
       await program.methods
         .renewSession()
@@ -261,10 +301,13 @@ describe("ephemeral_vault (TypeScript)", () => {
         .rpc();
 
       const vault = await program.account.ephemeralVault.fetch(f.vaultPda);
-      const now = Math.floor(Date.now() / 1000);
-      assert.isAtLeast(
+      assert.isAbove(
         vault.sessionExpiresAt!.toNumber(),
-        now + SESSION_DURATION_SECONDS - 15,
+        beforeRenewal.sessionExpiresAt!.toNumber(),
+      );
+      assert.strictEqual(
+        vault.sessionExpiresAt!.toNumber() - vault.lastActivity.toNumber(),
+        SESSION_DURATION_SECONDS,
       );
     });
   });
@@ -363,7 +406,7 @@ describe("ephemeral_vault (TypeScript)", () => {
       );
 
       // Wait for session to expire
-      await sleep(1500);
+      await sleep(2500);
 
       // Test expired session
       await expectError(
@@ -555,6 +598,21 @@ describe("ephemeral_vault (TypeScript)", () => {
           .rpc(),
         "SessionNotExpired",
       );
+    });
+
+    it("cleanup closes the inactive vault and reclaims rent to the user", async () => {
+      const f = await createFixture();
+
+      await program.methods
+        .revokeAccess()
+        .accounts({ user: f.user.publicKey, vault: f.vaultPda })
+        .signers([f.user])
+        .rpc();
+
+      await cleanupVaultEventually(program, f);
+
+      const closedVault = await provider.connection.getAccountInfo(f.vaultPda);
+      assert.isNull(closedVault);
     });
 
     it("get_vault_stats returns session states", async () => {

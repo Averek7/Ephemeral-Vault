@@ -46,9 +46,9 @@ solana airdrop 5 "$DEPLOY_PUBKEY" >/dev/null
 
 echo "Building and deploying program..."
 (cd "$ROOT/programs/ephemeralvault" && cargo +nightly build-sbf -- --locked >/dev/null)
-PROGRAM_SO="$ROOT/target/deploy/ephemeralvault.so"
+PROGRAM_SO="$ROOT/target/deploy/ephemeral_vault.so"
 solana program deploy "$PROGRAM_SO" >/dev/null
-PROGRAM_ID="$(solana address -k "$ROOT/target/deploy/ephemeralvault-keypair.json")"
+PROGRAM_ID="$(solana address -k "$ROOT/target/deploy/ephemeral_vault-keypair.json")"
 
 echo "Starting Postgres..."
 (cd "$ROOT/backend" && docker compose up -d) >/dev/null
