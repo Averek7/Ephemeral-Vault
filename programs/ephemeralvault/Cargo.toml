@@ -1,12 +1,12 @@
 [package]
-name = "ephemeralvault"
+name = "ephemeral_vault"
 version = "0.1.0"
 description = "Created with Anchor"
 edition = "2021"
 
 [lib]
-crate-type = ["cdylib", "lib"]
-name = "ephemeralvault"
+crate-type = ["cdylib", "rlib"]
+name = "ephemeral_vault"
 
 [features]
 default = []
@@ -14,8 +14,7 @@ cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
-idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+idl-build = ["anchor-lang/idl-build"]
 
 [dependencies]
-anchor-lang = "0.29.0"
-anchor-spl = "0.29.0"
+anchor-lang = "0.32.1"

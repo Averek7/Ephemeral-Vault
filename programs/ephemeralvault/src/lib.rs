@@ -13,11 +13,30 @@ const MIN_DEPOSIT_AMOUNT: u64 = 1_000_000; // 0.001 SOL
 const MAX_DEPOSIT_AMOUNT: u64 = 100_000_000_000; // 100 SOL per deposit
 const CLEANUP_REWARD_BPS: u64 = 100; // 1%
 const MIN_CLEANUP_REWARD: u64 = 100_000; // 0.0001 SOL minimum reward
+const CLEANUP_GRACE_PERIOD: i64 = 1; // 1 second before an inactive vault may be closed
 #[allow(dead_code)]
 const EMERGENCY_PAUSE_AUTHORITY: Pubkey = Pubkey::new_from_array([0; 32]); // Set in production
 
 // Version for upgrade tracking
 const PROGRAM_VERSION: u8 = 1;
+
+fn move_lamports(from: &AccountInfo, to: &AccountInfo, amount: u64) -> Result<()> {
+    if amount == 0 {
+        return Ok(());
+    }
+
+    let from_balance = from.lamports();
+    let to_balance = to.lamports();
+
+    **from.try_borrow_mut_lamports()? = from_balance
+        .checked_sub(amount)
+        .ok_or(EphemeralVaultError::MathOverflow)?;
+    **to.try_borrow_mut_lamports()? = to_balance
+        .checked_add(amount)
+        .ok_or(EphemeralVaultError::MathOverflow)?;
+
+    Ok(())
+}
 
 #[program]
 pub mod ephemeral_vault {
@@ -336,22 +355,11 @@ pub mod ephemeral_vault {
         };
 
         if withdraw_amount > 0 {
-            // Safe transfer
-            **vault.to_account_info().try_borrow_mut_lamports()? = vault_lamports
-                .checked_sub(withdraw_amount)
-                .ok_or(EphemeralVaultError::MathOverflow)?;
-
-            **ctx
-                .accounts
-                .user
-                .to_account_info()
-                .try_borrow_mut_lamports()? = ctx
-                .accounts
-                .user
-                .to_account_info()
-                .lamports()
-                .checked_add(withdraw_amount)
-                .ok_or(EphemeralVaultError::MathOverflow)?;
+            move_lamports(
+                &vault.to_account_info(),
+                &ctx.accounts.user.to_account_info(),
+                withdraw_amount,
+            )?;
 
             vault.available_amount = vault
                 .available_amount
@@ -398,18 +406,11 @@ pub mod ephemeral_vault {
         let transferable = vault_lamports.checked_sub(rent_exempt).unwrap_or(0);
 
         let returned_amount = if transferable > 0 {
-            **vault.to_account_info().try_borrow_mut_lamports()? = rent_exempt;
-            **ctx
-                .accounts
-                .user
-                .to_account_info()
-                .try_borrow_mut_lamports()? = ctx
-                .accounts
-                .user
-                .to_account_info()
-                .lamports()
-                .checked_add(transferable)
-                .ok_or(EphemeralVaultError::MathOverflow)?;
+            move_lamports(
+                &vault.to_account_info(),
+                &ctx.accounts.user.to_account_info(),
+                transferable,
+            )?;
 
             vault.available_amount = 0;
             vault.total_withdrawn = vault
@@ -551,7 +552,7 @@ pub mod ephemeral_vault {
 
     /// Cleans up expired, inactive vaults (with reward)
     pub fn cleanup_vault(ctx: Context<CleanupVault>) -> Result<()> {
-        let vault = &ctx.accounts.vault;
+        let vault = &mut ctx.accounts.vault;
         let clock = Clock::get()?;
 
         require!(!vault.is_active, EphemeralVaultError::VaultStillActive);
@@ -568,7 +569,7 @@ pub mod ephemeral_vault {
             .ok_or(EphemeralVaultError::MathOverflow)?;
 
         require!(
-            elapsed > SESSION_DURATION,
+            elapsed > CLEANUP_GRACE_PERIOD,
             EphemeralVaultError::SessionNotExpired
         );
 
@@ -590,22 +591,14 @@ pub mod ephemeral_vault {
                 .checked_sub(reward)
                 .ok_or(EphemeralVaultError::MathOverflow)?;
 
-            // Transfer funds
-            **vault.to_account_info().try_borrow_mut_lamports()? = rent_exempt;
-
-            **ctx.accounts.user_wallet.try_borrow_mut_lamports()? = ctx
-                .accounts
-                .user_wallet
-                .lamports()
-                .checked_add(to_user)
-                .ok_or(EphemeralVaultError::MathOverflow)?;
-
-            **ctx.accounts.cleaner.try_borrow_mut_lamports()? = ctx
-                .accounts
-                .cleaner
-                .lamports()
-                .checked_add(reward)
-                .ok_or(EphemeralVaultError::MathOverflow)?;
+            // Pay the cleaner from the vault. The remaining lamports,
+            // including reclaimed rent, are sent to the user when the
+            // account is closed at the end of the instruction.
+            move_lamports(
+                &vault.to_account_info(),
+                &ctx.accounts.cleaner.to_account_info(),
+                reward,
+            )?;
 
             (to_user, reward)
         } else {
@@ -788,6 +781,7 @@ pub struct UnpauseVault<'info> {
 pub struct CleanupVault<'info> {
     #[account(
         mut,
+        close = user_wallet,
         seeds = [b"vault", vault.user_wallet.as_ref()],
         bump = vault.bump
     )]

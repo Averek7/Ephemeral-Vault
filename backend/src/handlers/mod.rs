@@ -63,6 +63,22 @@ pub struct UpdateApprovedAmountRequest {
     new_approved_amount_lamports: u64,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecuteTradeRequest {
+    vault_pubkey: String,
+    delegate_pubkey: String,
+    trade_fee_lamports: u64,
+    trade_amount_lamports: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CleanupRequest {
+    vault_pubkey: String,
+    cleaner_pubkey: String,
+}
+
 fn parse_pubkey(raw: &str, field: &str) -> Result<Pubkey> {
     raw.parse::<Pubkey>()
         .map_err(|e| AppError::InvalidSignature(format!("invalid {field}: {e}")))
@@ -231,5 +247,33 @@ pub async fn tx_update_approved_amount(
         body.new_approved_amount_lamports,
     )
     .await?;
+    Ok(Json(tx))
+}
+
+pub async fn tx_execute_trade(
+    State(state): State<AppState>,
+    Json(body): Json<ExecuteTradeRequest>,
+) -> Result<Json<solana::TxEnvelope>> {
+    let vault = parse_pubkey(&body.vault_pubkey, "vaultPubkey")?;
+    let delegate = parse_pubkey(&body.delegate_pubkey, "delegatePubkey")?;
+    let tx = solana::build_execute_trade_tx(
+        &state.rpc,
+        &state.config,
+        vault,
+        delegate,
+        body.trade_fee_lamports,
+        body.trade_amount_lamports,
+    )
+    .await?;
+    Ok(Json(tx))
+}
+
+pub async fn tx_cleanup(
+    State(state): State<AppState>,
+    Json(body): Json<CleanupRequest>,
+) -> Result<Json<solana::TxEnvelope>> {
+    let vault = parse_pubkey(&body.vault_pubkey, "vaultPubkey")?;
+    let cleaner = parse_pubkey(&body.cleaner_pubkey, "cleanerPubkey")?;
+    let tx = solana::build_cleanup_tx(&state.rpc, &state.config, vault, cleaner).await?;
     Ok(Json(tx))
 }
