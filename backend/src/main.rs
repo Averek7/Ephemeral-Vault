@@ -16,7 +16,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let config = Config::from_env();
+    let config = Config::from_env()?;
 
     let db = PgPool::connect(&config.database_url)
         .await

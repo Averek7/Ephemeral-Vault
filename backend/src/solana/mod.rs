@@ -1,6 +1,6 @@
 use anchor_lang::{prelude::Pubkey as AnchorPubkey, InstructionData};
-use borsh::BorshDeserialize;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use borsh::BorshDeserialize;
 use serde::Serialize;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{
@@ -237,7 +237,12 @@ fn encode_transaction(
     })
 }
 
-fn create_vault_instruction(program_id: Pubkey, user: Pubkey, vault_pda: Pubkey, approved_amount: u64) -> Instruction {
+fn create_vault_instruction(
+    program_id: Pubkey,
+    user: Pubkey,
+    vault_pda: Pubkey,
+    approved_amount: u64,
+) -> Instruction {
     Instruction {
         program_id,
         accounts: vec![
@@ -258,7 +263,10 @@ fn approve_delegate_instruction(
 ) -> Instruction {
     Instruction {
         program_id,
-        accounts: vec![AccountMeta::new(vault_pda, false), AccountMeta::new(user, true)],
+        accounts: vec![
+            AccountMeta::new(vault_pda, false),
+            AccountMeta::new(user, true),
+        ],
         data: ephemeralvault::instruction::ApproveDelegate {
             delegate: to_anchor_pubkey(delegate),
             custom_duration,
@@ -267,7 +275,12 @@ fn approve_delegate_instruction(
     }
 }
 
-fn deposit_instruction(program_id: Pubkey, user: Pubkey, vault_pda: Pubkey, amount: u64) -> Instruction {
+fn deposit_instruction(
+    program_id: Pubkey,
+    user: Pubkey,
+    vault_pda: Pubkey,
+    amount: u64,
+) -> Instruction {
     Instruction {
         program_id,
         accounts: vec![
@@ -282,10 +295,18 @@ fn deposit_instruction(program_id: Pubkey, user: Pubkey, vault_pda: Pubkey, amou
     }
 }
 
-fn withdraw_instruction(program_id: Pubkey, user: Pubkey, vault_pda: Pubkey, amount: u64) -> Instruction {
+fn withdraw_instruction(
+    program_id: Pubkey,
+    user: Pubkey,
+    vault_pda: Pubkey,
+    amount: u64,
+) -> Instruction {
     Instruction {
         program_id,
-        accounts: vec![AccountMeta::new(vault_pda, false), AccountMeta::new(user, true)],
+        accounts: vec![
+            AccountMeta::new(vault_pda, false),
+            AccountMeta::new(user, true),
+        ],
         data: ephemeralvault::instruction::WithdrawBalance { amount }.data(),
     }
 }
@@ -293,7 +314,10 @@ fn withdraw_instruction(program_id: Pubkey, user: Pubkey, vault_pda: Pubkey, amo
 fn revoke_instruction(program_id: Pubkey, user: Pubkey, vault_pda: Pubkey) -> Instruction {
     Instruction {
         program_id,
-        accounts: vec![AccountMeta::new(vault_pda, false), AccountMeta::new(user, true)],
+        accounts: vec![
+            AccountMeta::new(vault_pda, false),
+            AccountMeta::new(user, true),
+        ],
         data: ephemeralvault::instruction::RevokeAccess {}.data(),
     }
 }
@@ -301,7 +325,10 @@ fn revoke_instruction(program_id: Pubkey, user: Pubkey, vault_pda: Pubkey) -> In
 fn renew_instruction(program_id: Pubkey, user: Pubkey, vault_pda: Pubkey) -> Instruction {
     Instruction {
         program_id,
-        accounts: vec![AccountMeta::new(vault_pda, false), AccountMeta::new_readonly(user, true)],
+        accounts: vec![
+            AccountMeta::new(vault_pda, false),
+            AccountMeta::new_readonly(user, true),
+        ],
         data: ephemeralvault::instruction::RenewSession {}.data(),
     }
 }
@@ -309,7 +336,10 @@ fn renew_instruction(program_id: Pubkey, user: Pubkey, vault_pda: Pubkey) -> Ins
 fn reactivate_instruction(program_id: Pubkey, user: Pubkey, vault_pda: Pubkey) -> Instruction {
     Instruction {
         program_id,
-        accounts: vec![AccountMeta::new(vault_pda, false), AccountMeta::new_readonly(user, true)],
+        accounts: vec![
+            AccountMeta::new(vault_pda, false),
+            AccountMeta::new_readonly(user, true),
+        ],
         data: ephemeralvault::instruction::ReactivateVault {}.data(),
     }
 }
@@ -322,7 +352,10 @@ fn update_approved_amount_instruction(
 ) -> Instruction {
     Instruction {
         program_id,
-        accounts: vec![AccountMeta::new(vault_pda, false), AccountMeta::new_readonly(user, true)],
+        accounts: vec![
+            AccountMeta::new(vault_pda, false),
+            AccountMeta::new_readonly(user, true),
+        ],
         data: ephemeralvault::instruction::UpdateApprovedAmount {
             new_approved_amount,
         }
@@ -333,7 +366,10 @@ fn update_approved_amount_instruction(
 fn pause_instruction(program_id: Pubkey, user: Pubkey, vault_pda: Pubkey) -> Instruction {
     Instruction {
         program_id,
-        accounts: vec![AccountMeta::new(vault_pda, false), AccountMeta::new_readonly(user, true)],
+        accounts: vec![
+            AccountMeta::new(vault_pda, false),
+            AccountMeta::new_readonly(user, true),
+        ],
         data: ephemeralvault::instruction::EmergencyPause {}.data(),
     }
 }
@@ -341,7 +377,10 @@ fn pause_instruction(program_id: Pubkey, user: Pubkey, vault_pda: Pubkey) -> Ins
 fn unpause_instruction(program_id: Pubkey, user: Pubkey, vault_pda: Pubkey) -> Instruction {
     Instruction {
         program_id,
-        accounts: vec![AccountMeta::new(vault_pda, false), AccountMeta::new_readonly(user, true)],
+        accounts: vec![
+            AccountMeta::new(vault_pda, false),
+            AccountMeta::new_readonly(user, true),
+        ],
         data: ephemeralvault::instruction::UnpauseVault {}.data(),
     }
 }
@@ -398,7 +437,11 @@ pub async fn fetch_vault_by_user(
         .map_err(|e| AppError::VaultNotFound(format!("{vault_pda}: {e}")))?;
 
     let vault = parse_vault_account(&account.data)?;
-    Ok(to_vault_dto(vault_pda, vault, chrono::Utc::now().timestamp()))
+    Ok(to_vault_dto(
+        vault_pda,
+        vault,
+        chrono::Utc::now().timestamp(),
+    ))
 }
 
 pub async fn fetch_vault_stats_by_user(
@@ -463,7 +506,12 @@ pub async fn build_deposit_tx(
     let (vault_pda, _) = derive_vault_pda(&program_id, &user);
     encode_transaction(
         user,
-        vec![deposit_instruction(program_id, user, vault_pda, amount_lamports)],
+        vec![deposit_instruction(
+            program_id,
+            user,
+            vault_pda,
+            amount_lamports,
+        )],
         latest_blockhash(rpc).await?,
         vault_pda,
     )
@@ -479,7 +527,12 @@ pub async fn build_withdraw_tx(
     let (vault_pda, _) = derive_vault_pda(&program_id, &user);
     encode_transaction(
         user,
-        vec![withdraw_instruction(program_id, user, vault_pda, amount_lamports)],
+        vec![withdraw_instruction(
+            program_id,
+            user,
+            vault_pda,
+            amount_lamports,
+        )],
         latest_blockhash(rpc).await?,
         vault_pda,
     )
@@ -692,7 +745,10 @@ mod tests {
         assert!(matches!(active.status, VaultStatusDto::Active));
 
         let expiring = to_vault_stats_dto(&active_vault, 1_700_000_310);
-        assert!(matches!(expiring.session_status, SessionStatusDto::ExpiringSoon));
+        assert!(matches!(
+            expiring.session_status,
+            SessionStatusDto::ExpiringSoon
+        ));
 
         let expired = to_vault_stats_dto(&active_vault, 1_700_000_650);
         assert!(matches!(expired.session_status, SessionStatusDto::Expired));
@@ -744,7 +800,10 @@ mod tests {
         let delegate = Pubkey::new_unique();
         let ix = approve_delegate_instruction(program_id, user, vault, delegate, Some(900));
 
-        assert_eq!(ix.accounts, vec![AccountMeta::new(vault, false), AccountMeta::new(user, true)]);
+        assert_eq!(
+            ix.accounts,
+            vec![AccountMeta::new(vault, false), AccountMeta::new(user, true)]
+        );
         assert_eq!(
             ix.data,
             ephemeralvault::instruction::ApproveDelegate {
@@ -772,9 +831,6 @@ mod tests {
                 AccountMeta::new(cleaner, true),
             ]
         );
-        assert_eq!(
-            ix.data,
-            ephemeralvault::instruction::CleanupVault {}.data()
-        );
+        assert_eq!(ix.data, ephemeralvault::instruction::CleanupVault {}.data());
     }
 }
