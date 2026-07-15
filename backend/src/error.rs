@@ -48,7 +48,10 @@ impl IntoResponse for AppError {
             AppError::UnauthorizedDelegate => (StatusCode::FORBIDDEN, self.to_string()),
             AppError::InvalidSignature(_) => (StatusCode::UNAUTHORIZED, self.to_string()),
             AppError::SolanaRpc(_) => (StatusCode::BAD_GATEWAY, self.to_string()),
-            _ => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".into()),
+            _ => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal server error".into(),
+            ),
         };
 
         (status, Json(json!({ "error": message }))).into_response()

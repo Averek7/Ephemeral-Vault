@@ -1,8 +1,10 @@
 use axum::{
     extract::{Path, Query, State},
+    http::StatusCode,
+    response::IntoResponse,
     Json,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use solana_sdk::pubkey::Pubkey;
 
@@ -88,6 +90,66 @@ pub async fn health() -> Json<Value> {
     Json(json!({ "status": "ok" }))
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadinessResponse {
+    status: &'static str,
+    postgres: DependencyStatus,
+    solana_rpc: DependencyStatus,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DependencyStatus {
+    ok: bool,
+    message: String,
+}
+
+impl DependencyStatus {
+    fn ok(message: impl Into<String>) -> Self {
+        Self {
+            ok: true,
+            message: message.into(),
+        }
+    }
+
+    fn failed(message: impl Into<String>) -> Self {
+        Self {
+            ok: false,
+            message: message.into(),
+        }
+    }
+}
+
+pub async fn ready(State(state): State<AppState>) -> impl IntoResponse {
+    let postgres = match sqlx::query("SELECT 1").execute(&state.db).await {
+        Ok(_) => DependencyStatus::ok("connected"),
+        Err(err) => DependencyStatus::failed(format!("query failed: {err}")),
+    };
+
+    let solana_rpc = match state.rpc.get_latest_blockhash().await {
+        Ok(blockhash) => DependencyStatus::ok(format!("latest blockhash {blockhash}")),
+        Err(err) => DependencyStatus::failed(format!("rpc failed: {err}")),
+    };
+
+    let is_ready = postgres.ok && solana_rpc.ok;
+    let status = if is_ready { "ready" } else { "not_ready" };
+    let status_code = if is_ready {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+
+    (
+        status_code,
+        Json(ReadinessResponse {
+            status,
+            postgres,
+            solana_rpc,
+        }),
+    )
+}
+
 pub async fn get_vault(
     State(state): State<AppState>,
     Path(user_pubkey): Path<String>,
@@ -159,7 +221,8 @@ pub async fn tx_deposit(
     Json(body): Json<AmountRequest>,
 ) -> Result<Json<solana::TxEnvelope>> {
     let user = parse_pubkey(&body.user_pubkey, "userPubkey")?;
-    let tx = solana::build_deposit_tx(&state.rpc, &state.config, user, body.amount_lamports).await?;
+    let tx =
+        solana::build_deposit_tx(&state.rpc, &state.config, user, body.amount_lamports).await?;
     Ok(Json(tx))
 }
 

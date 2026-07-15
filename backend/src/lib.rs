@@ -32,4 +32,3 @@ pub async fn build_server(state: AppState, host: &str, port: u16) -> anyhow::Res
     axum::serve(listener, app).await?;
     Ok(())
 }
-

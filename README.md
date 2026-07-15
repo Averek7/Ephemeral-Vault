@@ -1,6 +1,6 @@
 # Ephemeral Vault Protocol (Solana / Anchor)
 
-A production-ready smart-contract system enabling **gasless trading** on dark-pool perpetual futures DEX with enhanced security and complete session management.
+An Anchor-based delegated trading vault system for Solana with time-bound session control, balance limits, cleanup flows, and backend transaction building.
 
 This protocol introduces **ephemeral session-wallets** controlled by a parent wallet, providing secure, time-limited trading delegation with automatic cleanup and comprehensive monitoring.
 
@@ -904,15 +904,18 @@ docker run -p 8080:8080 --env-file .env ephemeral-vault-backend
 
 ## 🧪 Testing
 
+**Current test status**
+- `anchor test` ✅
+- `cargo test` ✅
+- Backend unit coverage includes PDA derivation, session/status mapping, and tx-builder instruction layout checks
+- Full backend localnet E2E remains an active track
+
 ```bash
 # Contract tests
 anchor test
 
 # Backend tests
 cargo test
-
-# Integration tests
-cargo test --test integration
 
 # Load testing
 artillery quick --count 100 --num 10 http://localhost:8080/health
@@ -959,29 +962,82 @@ Contributions welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidel
 
 ---
 
-## 🎯 Roadmap
+## 🎯 Delivery Tracks
 
-### ✅ Completed (v1.0)
-- Core vault functionality
-- Session management
-- Auto-deposit system
-- Trade execution
-- Session renewal
-- Balance withdrawal
-- Emergency pause
-- Vault statistics
-- Auto-cleanup with rewards
-- Complete audit logging
-- Database analytics
+This project is no longer tracked as a vague "coming soon" roadmap. The work is organized into concrete production tracks.
 
-### 🔜 Coming Soon (v1.1)
-- Multi-signature support
-- Advanced trading strategies
-- Cross-program invocation
-- Mobile SDK
-- Web3 wallet integration
-- Advanced analytics dashboard
-- Multi-chain support
+### Track 1: Foundation
+Status: In progress
+
+- Anchor program builds and tests cleanly
+- Backend compiles and has tx-builder unit coverage
+- Frontend/backend integration path exists
+- README, env setup, and local developer workflow are being aligned
+
+**Exit criteria**
+- `anchor test` passes reliably
+- `cargo test` passes reliably
+- local setup is reproducible from README alone
+
+### Track 2: Staging Readiness
+Status: Next
+
+- Add backend handler and route tests
+- Validate every `/tx/*` endpoint against expected account metas and payloads
+- Add startup validation for cluster, program id, and env configuration
+- Harden localnet/devnet deployment scripts
+- Add CI for contract tests, backend tests, formatting, and builds
+
+**Exit criteria**
+- staging environment deploys repeatably
+- backend API behavior is covered by tests
+- CI blocks broken merges
+
+### Track 3: Indexing And Data Reliability
+Status: Planned
+
+- Define the source of truth for trade history
+- Add an indexer or ingestion worker for on-chain events
+- Support replay/backfill into Postgres
+- Expose stable history and status APIs for frontend consumption
+
+**Exit criteria**
+- trade history can be rebuilt from chain activity
+- DB is not the only source of truth
+
+### Track 4: Security Hardening
+Status: Planned
+
+- Expand invariant tests around vault balances and lifecycle transitions
+- Review delegate abuse cases, cleanup economics, and pause/revoke guarantees
+- Add failure-path and adversarial test coverage
+- Prepare for external audit
+
+**Exit criteria**
+- protocol invariants are documented and tested
+- audit scope is well defined
+
+### Track 5: Production Operations
+Status: Planned
+
+- Structured logging across contract-facing backend flows
+- Metrics and alerting for RPC failures, DB issues, and indexing lag
+- Environment separation for local, staging, and production
+- Runbooks for pause, revoke, redeploy, and incident handling
+
+**Exit criteria**
+- operators can detect, diagnose, and respond to failures quickly
+
+### Track 6: Mainnet Readiness
+Status: Planned
+
+- External security audit completed
+- Staging soak period completed
+- User-facing risk disclosures and operational docs finalized
+- Deployment and rollback procedures verified
+
+**Exit criteria**
+- project is ready for controlled beta or mainnet launch
 
 ---
 
@@ -1012,9 +1068,9 @@ Built with:
 
 ---
 
-**Status:** Production Ready 🚀  
-**Version:** 1.0.0  
-**Last Updated:** February 16, 2026
+**Status:** Staging Track  
+**Version:** 0.1.0  
+**Last Updated:** March 25, 2026
 
 ---
 

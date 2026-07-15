@@ -1,6 +1,6 @@
-use sqlx::PgPool;
 use crate::db::models::{NewTrade, TradeRecord};
 use crate::error::Result;
+use sqlx::PgPool;
 
 pub async fn insert_trade(pool: &PgPool, trade: &NewTrade) -> Result<TradeRecord> {
     let rec = sqlx::query_as::<_, TradeRecord>(
