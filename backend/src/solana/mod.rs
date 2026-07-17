@@ -7,6 +7,7 @@ use solana_sdk::{
     instruction::{AccountMeta, Instruction},
     message::Message,
     pubkey::Pubkey,
+    signature::Signature,
     system_program,
     transaction::Transaction,
 };
@@ -106,6 +107,26 @@ pub struct VaultStatsDto {
 pub struct TxEnvelope {
     pub transaction_base64: String,
     pub vault_pda: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TxSimulationDto {
+    pub ok: bool,
+    pub error: Option<String>,
+    pub logs: Vec<String>,
+    pub units_consumed: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TxStatusDto {
+    pub signature: String,
+    pub found: bool,
+    pub slot: Option<u64>,
+    pub confirmations: Option<usize>,
+    pub confirmation_status: Option<String>,
+    pub error: Option<String>,
 }
 
 fn to_sol(lamports: u64) -> f64 {
@@ -234,6 +255,64 @@ fn encode_transaction(
     Ok(TxEnvelope {
         transaction_base64: BASE64.encode(bytes),
         vault_pda: vault_pda.to_string(),
+    })
+}
+
+pub async fn simulate_transaction_base64(
+    rpc: &RpcClient,
+    transaction_base64: &str,
+) -> Result<TxSimulationDto> {
+    let bytes = BASE64
+        .decode(transaction_base64)
+        .map_err(|e| AppError::Validation(format!("transactionBase64 is invalid base64: {e}")))?;
+    let tx = bincode::deserialize::<Transaction>(&bytes).map_err(|e| {
+        AppError::Validation(format!("transactionBase64 is not a transaction: {e}"))
+    })?;
+
+    let response = rpc
+        .simulate_transaction(&tx)
+        .await
+        .map_err(|e| AppError::SolanaRpc(format!("failed to simulate transaction: {e}")))?;
+
+    let error = response.value.err.map(|err| format!("{err:?}"));
+    Ok(TxSimulationDto {
+        ok: error.is_none(),
+        error,
+        logs: response.value.logs.unwrap_or_default(),
+        units_consumed: response.value.units_consumed,
+    })
+}
+
+pub async fn fetch_transaction_status(
+    rpc: &RpcClient,
+    signature: Signature,
+) -> Result<TxStatusDto> {
+    let response = rpc
+        .get_signature_statuses(&[signature])
+        .await
+        .map_err(|e| AppError::SolanaRpc(format!("failed to fetch transaction status: {e}")))?;
+    let status = response.value.into_iter().next().flatten();
+
+    let Some(status) = status else {
+        return Ok(TxStatusDto {
+            signature: signature.to_string(),
+            found: false,
+            slot: None,
+            confirmations: None,
+            confirmation_status: None,
+            error: None,
+        });
+    };
+
+    Ok(TxStatusDto {
+        signature: signature.to_string(),
+        found: true,
+        slot: Some(status.slot),
+        confirmations: status.confirmations,
+        confirmation_status: status
+            .confirmation_status
+            .map(|status| format!("{status:?}").to_lowercase()),
+        error: status.err.map(|err| format!("{err:?}")),
     })
 }
 

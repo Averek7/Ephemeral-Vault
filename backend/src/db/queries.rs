@@ -1,5 +1,5 @@
 use crate::db::models::{NewTrade, TradeRecord};
-use crate::error::Result;
+use crate::error::{AppError, Result};
 use sqlx::PgPool;
 
 pub async fn insert_trade(pool: &PgPool, trade: &NewTrade) -> Result<TradeRecord> {
@@ -19,8 +19,19 @@ pub async fn insert_trade(pool: &PgPool, trade: &NewTrade) -> Result<TradeRecord
     .bind(&trade.status)
     .bind(trade.slot)
     .fetch_one(pool)
-    .await?;
+    .await
+    .map_err(map_insert_trade_error)?;
     Ok(rec)
+}
+
+fn map_insert_trade_error(err: sqlx::Error) -> AppError {
+    if let sqlx::Error::Database(db_err) = &err {
+        if db_err.constraint() == Some("trades_tx_hash_unique") {
+            return AppError::Conflict("tx_hash already exists".into());
+        }
+    }
+
+    AppError::Database(err)
 }
 
 pub async fn get_trades_for_vault(

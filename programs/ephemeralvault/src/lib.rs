@@ -47,7 +47,7 @@ pub mod ephemeral_vault {
         approved_amount: u64,
     ) -> Result<()> {
         require!(
-            approved_amount >= MIN_APPROVED_AMOUNT && approved_amount <= MAX_APPROVED_AMOUNT,
+            (MIN_APPROVED_AMOUNT..=MAX_APPROVED_AMOUNT).contains(&approved_amount),
             EphemeralVaultError::InvalidApprovedAmount
         );
 
@@ -403,7 +403,7 @@ pub mod ephemeral_vault {
         // Return all available balance
         let vault_lamports = vault.to_account_info().lamports();
         let rent_exempt = Rent::get()?.minimum_balance(vault.to_account_info().data_len());
-        let transferable = vault_lamports.checked_sub(rent_exempt).unwrap_or(0);
+        let transferable = vault_lamports.saturating_sub(rent_exempt);
 
         let returned_amount = if transferable > 0 {
             move_lamports(
@@ -478,8 +478,7 @@ pub mod ephemeral_vault {
             EphemeralVaultError::Unauthorized
         );
         require!(
-            new_approved_amount >= MIN_APPROVED_AMOUNT
-                && new_approved_amount <= MAX_APPROVED_AMOUNT,
+            (MIN_APPROVED_AMOUNT..=MAX_APPROVED_AMOUNT).contains(&new_approved_amount),
             EphemeralVaultError::InvalidApprovedAmount
         );
         require!(
@@ -576,7 +575,7 @@ pub mod ephemeral_vault {
         // Calculate rewards
         let vault_lamports = vault.to_account_info().lamports();
         let rent_exempt = Rent::get()?.minimum_balance(vault.to_account_info().data_len());
-        let available = vault_lamports.checked_sub(rent_exempt).unwrap_or(0);
+        let available = vault_lamports.saturating_sub(rent_exempt);
 
         let (to_user, reward) = if available > 0 {
             let reward = available

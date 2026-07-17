@@ -8,6 +8,9 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum AppError {
+    #[error("Validation error: {0}")]
+    Validation(String),
+
     #[error("Vault not found: {0}")]
     VaultNotFound(String),
 
@@ -26,6 +29,9 @@ pub enum AppError {
     #[error("Solana RPC error: {0}")]
     SolanaRpc(String),
 
+    #[error("Conflict: {0}")]
+    Conflict(String),
+
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
 
@@ -42,19 +48,21 @@ pub enum AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, message) = match &self {
+            AppError::Validation(_) => (StatusCode::BAD_REQUEST, self.to_string()),
             AppError::VaultNotFound(_) => (StatusCode::NOT_FOUND, self.to_string()),
             AppError::SessionExpired => (StatusCode::GONE, self.to_string()),
             AppError::ExceedsApprovedLimit => (StatusCode::BAD_REQUEST, self.to_string()),
             AppError::UnauthorizedDelegate => (StatusCode::FORBIDDEN, self.to_string()),
-            AppError::InvalidSignature(_) => (StatusCode::UNAUTHORIZED, self.to_string()),
+            AppError::InvalidSignature(_) => (StatusCode::BAD_REQUEST, self.to_string()),
             AppError::SolanaRpc(_) => (StatusCode::BAD_GATEWAY, self.to_string()),
+            AppError::Conflict(_) => (StatusCode::CONFLICT, self.to_string()),
             _ => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Internal server error".into(),
             ),
         };
 
-        (status, Json(json!({ "error": message }))).into_response()
+        (status, Json(json!({ "error": { "message": message } }))).into_response()
     }
 }
 
