@@ -6,7 +6,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use solana_sdk::pubkey::Pubkey;
+use solana_sdk::{pubkey::Pubkey, signature::Signature};
 
 use crate::{
     db::{models::NewTrade, queries},
@@ -14,6 +14,12 @@ use crate::{
     solana,
     state::AppState,
 };
+
+const MIN_APPROVED_AMOUNT_LAMPORTS: u64 = 1_000_000;
+const MAX_APPROVED_AMOUNT_LAMPORTS: u64 = 1_000_000_000_000;
+const MIN_DEPOSIT_LAMPORTS: u64 = 1_000_000;
+const MAX_DEPOSIT_LAMPORTS: u64 = 100_000_000_000;
+const MAX_SESSION_DURATION_SECONDS: i64 = 3_600;
 
 #[derive(Debug, Deserialize)]
 pub struct PaginationQuery {
@@ -81,9 +87,47 @@ pub struct CleanupRequest {
     cleaner_pubkey: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SimulateTransactionRequest {
+    transaction_base64: String,
+}
+
 fn parse_pubkey(raw: &str, field: &str) -> Result<Pubkey> {
     raw.parse::<Pubkey>()
         .map_err(|e| AppError::InvalidSignature(format!("invalid {field}: {e}")))
+}
+
+fn validate_lamports_range(value: u64, field: &str, min: u64, max: u64) -> Result<()> {
+    if value < min || value > max {
+        return Err(AppError::Validation(format!(
+            "{field} must be between {min} and {max} lamports"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_positive_lamports(value: u64, field: &str) -> Result<()> {
+    if value == 0 {
+        return Err(AppError::Validation(format!(
+            "{field} must be greater than 0"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_custom_duration(duration: Option<i64>) -> Result<()> {
+    if let Some(duration) = duration {
+        if duration <= 0 || duration > MAX_SESSION_DURATION_SECONDS {
+            return Err(AppError::Validation(format!(
+                "customDurationSeconds must be between 1 and {MAX_SESSION_DURATION_SECONDS}"
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 pub async fn health() -> Json<Value> {
@@ -187,6 +231,7 @@ pub async fn create_trade(
     State(state): State<AppState>,
     Json(body): Json<NewTrade>,
 ) -> Result<Json<crate::db::models::TradeRecord>> {
+    body.validate()?;
     let trade = queries::insert_trade(&state.db, &body).await?;
     Ok(Json(trade))
 }
@@ -201,6 +246,21 @@ pub async fn tx_create_vault(
         .as_deref()
         .map(|raw| parse_pubkey(raw, "delegatePubkey"))
         .transpose()?;
+    validate_lamports_range(
+        body.approved_amount_lamports,
+        "approvedAmountLamports",
+        MIN_APPROVED_AMOUNT_LAMPORTS,
+        MAX_APPROVED_AMOUNT_LAMPORTS,
+    )?;
+    validate_custom_duration(body.custom_duration_seconds)?;
+    if let Some(amount) = body.initial_deposit_lamports.filter(|amount| *amount > 0) {
+        validate_lamports_range(
+            amount,
+            "initialDepositLamports",
+            MIN_DEPOSIT_LAMPORTS,
+            MAX_DEPOSIT_LAMPORTS,
+        )?;
+    }
 
     let tx = solana::build_create_vault_tx(
         &state.rpc,
@@ -221,6 +281,12 @@ pub async fn tx_deposit(
     Json(body): Json<AmountRequest>,
 ) -> Result<Json<solana::TxEnvelope>> {
     let user = parse_pubkey(&body.user_pubkey, "userPubkey")?;
+    validate_lamports_range(
+        body.amount_lamports,
+        "amountLamports",
+        MIN_DEPOSIT_LAMPORTS,
+        MAX_DEPOSIT_LAMPORTS,
+    )?;
     let tx =
         solana::build_deposit_tx(&state.rpc, &state.config, user, body.amount_lamports).await?;
     Ok(Json(tx))
@@ -231,6 +297,9 @@ pub async fn tx_withdraw(
     Json(body): Json<AmountRequest>,
 ) -> Result<Json<solana::TxEnvelope>> {
     let user = parse_pubkey(&body.user_pubkey, "userPubkey")?;
+    if body.amount_lamports > 0 {
+        validate_positive_lamports(body.amount_lamports, "amountLamports")?;
+    }
     let tx =
         solana::build_withdraw_tx(&state.rpc, &state.config, user, body.amount_lamports).await?;
     Ok(Json(tx))
@@ -278,6 +347,7 @@ pub async fn tx_approve_delegate(
 ) -> Result<Json<solana::TxEnvelope>> {
     let user = parse_pubkey(&body.user_pubkey, "userPubkey")?;
     let delegate = parse_pubkey(&body.delegate_pubkey, "delegatePubkey")?;
+    validate_custom_duration(body.custom_duration_seconds)?;
     let tx = solana::build_approve_delegate_tx(
         &state.rpc,
         &state.config,
@@ -303,6 +373,12 @@ pub async fn tx_update_approved_amount(
     Json(body): Json<UpdateApprovedAmountRequest>,
 ) -> Result<Json<solana::TxEnvelope>> {
     let user = parse_pubkey(&body.user_pubkey, "userPubkey")?;
+    validate_lamports_range(
+        body.new_approved_amount_lamports,
+        "newApprovedAmountLamports",
+        MIN_APPROVED_AMOUNT_LAMPORTS,
+        MAX_APPROVED_AMOUNT_LAMPORTS,
+    )?;
     let tx = solana::build_update_approved_amount_tx(
         &state.rpc,
         &state.config,
@@ -319,6 +395,13 @@ pub async fn tx_execute_trade(
 ) -> Result<Json<solana::TxEnvelope>> {
     let vault = parse_pubkey(&body.vault_pubkey, "vaultPubkey")?;
     let delegate = parse_pubkey(&body.delegate_pubkey, "delegatePubkey")?;
+    validate_positive_lamports(body.trade_fee_lamports, "tradeFeeLamports")?;
+    validate_lamports_range(
+        body.trade_amount_lamports,
+        "tradeAmountLamports",
+        MIN_APPROVED_AMOUNT_LAMPORTS,
+        MAX_APPROVED_AMOUNT_LAMPORTS,
+    )?;
     let tx = solana::build_execute_trade_tx(
         &state.rpc,
         &state.config,
@@ -339,4 +422,57 @@ pub async fn tx_cleanup(
     let cleaner = parse_pubkey(&body.cleaner_pubkey, "cleanerPubkey")?;
     let tx = solana::build_cleanup_tx(&state.rpc, &state.config, vault, cleaner).await?;
     Ok(Json(tx))
+}
+
+pub async fn tx_simulate(
+    State(state): State<AppState>,
+    Json(body): Json<SimulateTransactionRequest>,
+) -> Result<Json<solana::TxSimulationDto>> {
+    if body.transaction_base64.trim().is_empty() {
+        return Err(AppError::Validation(
+            "transactionBase64 must not be empty".into(),
+        ));
+    }
+
+    let simulation =
+        solana::simulate_transaction_base64(&state.rpc, &body.transaction_base64).await?;
+    Ok(Json(simulation))
+}
+
+pub async fn tx_status(
+    State(state): State<AppState>,
+    Path(signature): Path<String>,
+) -> Result<Json<solana::TxStatusDto>> {
+    let signature = signature
+        .parse::<Signature>()
+        .map_err(|e| AppError::Validation(format!("invalid signature: {e}")))?;
+    let status = solana::fetch_transaction_status(&state.rpc, signature).await?;
+    Ok(Json(status))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validates_lamport_ranges() {
+        assert!(validate_lamports_range(1_000_000, "amount", 1_000_000, 2_000_000).is_ok());
+        assert!(validate_lamports_range(999_999, "amount", 1_000_000, 2_000_000).is_err());
+        assert!(validate_lamports_range(2_000_001, "amount", 1_000_000, 2_000_000).is_err());
+    }
+
+    #[test]
+    fn validates_positive_lamports() {
+        assert!(validate_positive_lamports(1, "amount").is_ok());
+        assert!(validate_positive_lamports(0, "amount").is_err());
+    }
+
+    #[test]
+    fn validates_custom_duration_bounds() {
+        assert!(validate_custom_duration(None).is_ok());
+        assert!(validate_custom_duration(Some(1)).is_ok());
+        assert!(validate_custom_duration(Some(MAX_SESSION_DURATION_SECONDS)).is_ok());
+        assert!(validate_custom_duration(Some(0)).is_err());
+        assert!(validate_custom_duration(Some(MAX_SESSION_DURATION_SECONDS + 1)).is_err());
+    }
 }

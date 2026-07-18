@@ -1,0 +1,35 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    env_file:
+      - .env.production
+    environment:
+      DATABASE_URL: postgres://ephemeral_vault:${POSTGRES_PASSWORD:-ephemeral_vault}@postgres:5432/ephemeral_vault
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ephemeral_vault
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ephemeral_vault}
+      POSTGRES_DB: ephemeral_vault
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ephemeral_vault -d ephemeral_vault"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
